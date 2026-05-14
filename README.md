@@ -45,20 +45,12 @@ Quick Start (Linux)
 Compiling
 ---------
 
-### Linux
+The project uses the [Meson build system](https://mesonbuild.com/).
 
-You will need:
-* SDL2
-* SDL2_Image
-* can-utils
+### Linux
 
 ```
   sudo apt-get install libsdl2-dev libsdl2-image-dev can-utils
-```
-
-With dependencies installed, use the [Meson build system](https://mesonbuild.com/):
-
-```
   meson setup builddir && cd builddir
   meson compile
 ```
@@ -107,6 +99,18 @@ bus — you can use SavvyCAN to send frames that `icsim` will process.
 
 > **Firewall:** The first time you run the bridge, Windows Firewall may
 > prompt you to allow network access. Click **Allow**.
+
+### WebSocket Bridge (browser dashboard)
+
+A second bridge is available that serves a live CAN dashboard in any browser:
+
+```
+  builddir\websocket_bridge.exe vcan0
+```
+
+Open `http://127.0.0.1:8080` — you'll see a real-time table of CAN frames
+and a form to inject frames back into the bus. Works alongside the GVRET
+bridge on port 23.
 
 ### Testing the bus manually
 
@@ -195,9 +199,9 @@ Makefile CFLAGS to point to the correct SDL2 include directory, e.g.
 
 ### lib.o not linking
 
-If `lib.o` doesn't link, it's probably the wrong architecture. Compile
-can-utils from source and copy the new `lib.o` to the project directory:
-https://github.com/linux-can/can-utils
+This project now uses **Meson** which compiles `lib.c` directly from source.
+The pre-compiled `lib.o` has been removed. If you were using the old Makefile,
+switch to Meson instead (`meson setup builddir && meson compile -C builddir`).
 
 ### canplayer errors (Linux)
 
