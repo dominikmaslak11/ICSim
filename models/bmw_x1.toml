@@ -1,0 +1,52 @@
+# BMW X1 vehicle configuration for ICSim
+# Load with: icsim -m models/bmw_x1.toml
+
+[vehicle]
+name = "BMW X1"
+description = "BMW X1 with custom speed signal format (non-linear)"
+
+[can]
+speed_id = "0x1B4"
+door_id = "0x19B"
+signal_id = "0x188"
+
+speed_byte = 0
+door_byte = 2
+signal_byte = 0
+
+[signals.speed]
+# BMW X1 uses a custom speed formula:
+# mph = (((data[byte+1] - 208) * 256) + data[byte]) / 16
+# The base config stores the default formula params; the BMW
+# override is detected at runtime when model name starts with "bmw".
+length = 2
+scaling = 1.0
+divisor = 16
+
+[signals.doors]
+length = 1
+door1_mask = 0x01
+door2_mask = 0x02
+door3_mask = 0x04
+door4_mask = 0x08
+
+[signals.turn]
+length = 1
+left_mask = 0x01
+right_mask = 0x02
+
+[dashboard]
+width = 692
+height = 329
+
+[dashboard.speedometer]
+x = 200
+y = 80
+width = 300
+height = 130
+needle_center_x = 135
+needle_center_y = 20
+angle_min = 0
+angle_max = 180
+value_min = 0
+value_max = 280

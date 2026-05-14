@@ -14,6 +14,7 @@
 
 #include "getopt_compat.h"
 #include "can_platform.h"
+#include "config.h"
 #include "lib.h"
 
 #ifndef DATA_DIR
@@ -26,38 +27,19 @@
 #define DOOR_UNLOCKED 1
 #define OFF 0
 #define ON 1
-#define DEFAULT_DOOR_ID 411 // 0x19b
-#define DEFAULT_DOOR_BYTE 2
-#define CAN_DOOR1_LOCK 1
-#define CAN_DOOR2_LOCK 2 
-#define CAN_DOOR3_LOCK 4
-#define CAN_DOOR4_LOCK 8
-#define DEFAULT_SIGNAL_ID 392 // 0x188
-#define DEFAULT_SIGNAL_BYTE 0
-#define CAN_LEFT_SIGNAL 1
-#define CAN_RIGHT_SIGNAL 2
-#define DEFAULT_SPEED_ID 580 // 0x244
-#define DEFAULT_SPEED_BYTE 3 // bytes 3,4
 
-// For now, specific models will be done as constants.  Later
-// We should use a config file
-#define MODEL_BMW_X1_SPEED_ID 0x1B4
-#define MODEL_BMW_X1_SPEED_BYTE 0
-#define MODEL_BMW_X1_RPM_ID 0x0AA
-#define MODEL_BMW_X1_RPM_BYTE 4
-#define MODEL_BMW_X1_HANDBRAKE_ID 0x1B4  // Not implemented yet
-#define MODEL_BMW_X1_HANDBRAKE_BYTE 5
+/* CAN IDs, byte positions, and signal definitions are now loaded from
+ * TOML config files via config.h / config.c.  Hardcoded BMW model
+ * constants have been moved to models/bmw_x1.toml. */
+static icsim_config_t g_cfg;
 
 int debug = 0;
 int randomize = 0;
 int seed = 0;
-int door_pos = DEFAULT_DOOR_BYTE;
-int signal_pos = DEFAULT_SIGNAL_BYTE;
-int speed_pos = DEFAULT_SPEED_BYTE;
 long current_speed = 0;
 int door_status[4];
 int turn_status[2];
-char *model = NULL;
+char *model = NULL;   /* model name for BMW-specific speed formula */
 char data_file[256];
 SDL_Renderer *renderer = NULL;
 SDL_Texture *base_texture = NULL;
@@ -231,16 +213,16 @@ void redraw_ic() {
 /* Parses CAN fram and updates current_speed */
 void update_speed_status(struct canfd_frame *cf, int maxdlen) {
   int len = (cf->len > maxdlen) ? maxdlen : cf->len;
-  if(len <= speed_pos + 1) return;
+  if(len <= g_cfg.can.speed_pos + 1) return;
   if (model) {
 	if (!strncmp(model, "bmw", 3)) {
-		current_speed = (((cf->data[speed_pos + 1] - 208) * 256) + cf->data[speed_pos]) / 16;
+		current_speed = (((cf->data[g_cfg.can.speed_pos + 1] - 208) * 256) + cf->data[g_cfg.can.speed_pos]) / 16;
 	}
   } else {
-	  int speed = cf->data[speed_pos] << 8;
-	  speed += cf->data[speed_pos + 1];
-	  speed = speed / 100; // speed in kilometers
-	  current_speed = speed * 0.6213751; // mph
+	  int speed = cf->data[g_cfg.can.speed_pos] << 8;
+	  speed += cf->data[g_cfg.can.speed_pos + 1];
+	  speed = speed / g_cfg.speed.divisor;
+	  current_speed = speed * g_cfg.speed.scaling;
   }
   update_speed();
   screen_dirty = 1;
@@ -249,13 +231,13 @@ void update_speed_status(struct canfd_frame *cf, int maxdlen) {
 /* Parses CAN frame and updates turn signal status */
 void update_signal_status(struct canfd_frame *cf, int maxdlen) {
   int len = (cf->len > maxdlen) ? maxdlen : cf->len;
-  if(len <= signal_pos) return;
-  if(cf->data[signal_pos] & CAN_LEFT_SIGNAL) {
+  if(len <= g_cfg.can.signal_pos) return;
+  if(cf->data[g_cfg.can.signal_pos] & ICSIM_TURN_LEFT) {
     turn_status[0] = ON;
   } else {
     turn_status[0] = OFF;
   }
-  if(cf->data[signal_pos] & CAN_RIGHT_SIGNAL) {
+  if(cf->data[g_cfg.can.signal_pos] & ICSIM_TURN_RIGHT) {
     turn_status[1] = ON;
   } else {
     turn_status[1] = OFF;
@@ -267,23 +249,23 @@ void update_signal_status(struct canfd_frame *cf, int maxdlen) {
 /* Parses CAN frame and updates door status */
 void update_door_status(struct canfd_frame *cf, int maxdlen) {
   int len = (cf->len > maxdlen) ? maxdlen : cf->len;
-  if(len <= door_pos) return;
-  if(cf->data[door_pos] & CAN_DOOR1_LOCK) {
+  if(len <= g_cfg.can.door_pos) return;
+  if(cf->data[g_cfg.can.door_pos] & ICSIM_DOOR1) {
 	door_status[0] = DOOR_LOCKED;
   } else {
 	door_status[0] = DOOR_UNLOCKED;
   }
-  if(cf->data[door_pos] & CAN_DOOR2_LOCK) {
+  if(cf->data[g_cfg.can.door_pos] & ICSIM_DOOR2) {
 	door_status[1] = DOOR_LOCKED;
   } else {
 	door_status[1] = DOOR_UNLOCKED;
   }
-  if(cf->data[door_pos] & CAN_DOOR3_LOCK) {
+  if(cf->data[g_cfg.can.door_pos] & ICSIM_DOOR3) {
 	door_status[2] = DOOR_LOCKED;
   } else {
 	door_status[2] = DOOR_UNLOCKED;
   }
-  if(cf->data[door_pos] & CAN_DOOR4_LOCK) {
+  if(cf->data[g_cfg.can.door_pos] & ICSIM_DOOR4) {
 	door_status[3] = DOOR_LOCKED;
   } else {
 	door_status[3] = DOOR_UNLOCKED;
@@ -299,7 +281,7 @@ void Usage(char *msg) {
   printf("\t-r\trandomize IDs\n");
   printf("\t-s\tseed value\n");
   printf("\t-d\tdebug mode\n");
-  printf("\t-m\tmodel NAME  (Ex: -m bmw)\n");
+  printf("\t-m\tmodel FILE or name  (Ex: -m bmw, -m models/default.toml)\n");
   exit(1);
 }
 
@@ -359,9 +341,29 @@ int main(int argc, char *argv[]) {
 
   init_car_state();
 
-  door_id = DEFAULT_DOOR_ID;
-  signal_id = DEFAULT_SIGNAL_ID;
-  speed_id = DEFAULT_SPEED_ID;
+  /* Load vehicle configuration from TOML file if -m was given */
+  if (model) {
+	if (!strncmp(model, "bmw", 3)) {
+		/* BMW X1: try TOML first, model string still triggers formula */
+		icsim_config_load(&g_cfg, "models/bmw_x1.toml");
+	} else if (strchr(model, '.')) {
+		/* Looks like a file path (e.g. models/default.toml) */
+		icsim_config_load(&g_cfg, model);
+	} else {
+		/* Short name: try models/<name>.toml */
+		char path[256];
+		snprintf(path, sizeof(path), "models/%s.toml", model);
+		if (icsim_config_load(&g_cfg, path) != 0)
+			icsim_config_defaults(&g_cfg);
+	}
+  } else {
+	icsim_config_defaults(&g_cfg);
+  }
+  printf("Vehicle: %s (%s)\n", g_cfg.name, g_cfg.description);
+
+  door_id   = g_cfg.can.door_id;
+  signal_id = g_cfg.can.signal_id;
+  speed_id  = g_cfg.can.speed_id;
 
   if (randomize || seed) {
 	if(randomize) seed = time(NULL);
@@ -369,9 +371,9 @@ int main(int argc, char *argv[]) {
 	door_id = (rand() % 2046) + 1;
 	signal_id = (rand() % 2046) + 1;
 	speed_id = (rand() % 2046) + 1;
-	door_pos = rand() % 9;
-	signal_pos = rand() % 9;
-	speed_pos = rand() % 8;
+	g_cfg.can.door_pos = rand() % 9;
+	g_cfg.can.signal_pos = rand() % 9;
+	g_cfg.can.speed_pos = rand() % 8;
 	printf("Seed: %d\n", seed);
 	const char *seed_path =
 #ifdef _WIN32
@@ -383,14 +385,6 @@ int main(int argc, char *argv[]) {
 	if (fdseed) {
 		fprintf(fdseed, "%d\n", seed);
 		fclose(fdseed);
-	}
-  } else if (model) {
-	if (!strncmp(model, "bmw", 3)) {
-		speed_id = MODEL_BMW_X1_SPEED_ID;
-		speed_pos = MODEL_BMW_X1_SPEED_BYTE;
-	} else {
-		printf("Unknown model.  Acceptable models: bmw\n");
-		exit(3);
 	}
   }
 

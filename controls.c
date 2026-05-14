@@ -19,6 +19,7 @@
 
 #include "getopt_compat.h"
 #include "can_platform.h"
+#include "config.h"
 #include "lib.h"
 
 #ifndef DATA_DIR
@@ -30,18 +31,9 @@
 // 0 = No randomization added to the packets other than location and ID
 // 1 = Add NULL padding
 // 2 = Randomize unused bytes
-#define DEFAULT_DOOR_ID 411
-#define DEFAULT_DOOR_POS 2
-#define DEFAULT_SIGNAL_ID 392
-#define DEFAULT_SIGNAL_POS 0
-#define DEFAULT_SPEED_ID 580
-#define DEFAULT_SPEED_POS 3
-#define CAN_DOOR1_LOCK 1
-#define CAN_DOOR2_LOCK 2 
-#define CAN_DOOR3_LOCK 4
-#define CAN_DOOR4_LOCK 8
-#define CAN_LEFT_SIGNAL 1
-#define CAN_RIGHT_SIGNAL 2
+/* CAN IDs, byte positions, and signal bitmasks are now loaded from
+ * TOML config files via config.h / config.c.  The defaults match
+ * the original hardcoded values. */
 #define ON 1
 #define OFF 0
 #define DOOR_LOCKED 0
@@ -83,15 +75,8 @@
 #define USB_CONTROLLER 0
 #define PS3_CONTROLLER 1
 
-// For now, specific models will be done as constants.  Later
-// We should use a config file
-#define MODEL_BMW_X1_SPEED_ID 0x1B4
-#define MODEL_BMW_X1_SPEED_BYTE 0
-#define MODEL_BMW_X1_RPM_ID 0x0AA
-#define MODEL_BMW_X1_RPM_BYTE 4
-#define MODEL_BMW_X1_HANDBRAKE_ID 0x1B4  // Not implemented yet
-#define MODEL_BMW_X1_HANDBRAKE_BYTE 5
-
+/* Model constants are now in TOML config files (models/ *.toml) */
+static icsim_config_t g_cfg;
 
 int gButtonY = BUTTON_Y;
 int gButtonX = BUTTON_X;
@@ -119,12 +104,9 @@ can_bus_t *s;
 struct canfd_frame cf;
 char *traffic_log = DEFAULT_CAN_TRAFFIC;
 char can_name[64];
-int door_pos = DEFAULT_DOOR_POS;
-int signal_pos = DEFAULT_SIGNAL_POS;
-int speed_pos = DEFAULT_SPEED_POS;
-int door_len = DEFAULT_DOOR_POS + 1;
-int signal_len = DEFAULT_SIGNAL_POS + 1;
-int speed_len = DEFAULT_SPEED_POS + 2;
+int door_len;
+int signal_len;
+int speed_len;
 int difficulty = DEFAULT_DIFFICULTY;
 char *model = NULL;
 
@@ -184,9 +166,9 @@ void send_lock(char door) {
 	memset(&cf, 0, sizeof(cf));
 	cf.can_id = door_id;
 	cf.len = door_len;
-	cf.data[door_pos] = door_state;
-	if (door_pos) randomize_pkt(0, door_pos);
-	if (door_len != door_pos + 1) randomize_pkt(door_pos + 1, door_len);
+	cf.data[g_cfg.can.door_pos] = door_state;
+	if (g_cfg.can.door_pos) randomize_pkt(0, g_cfg.can.door_pos);
+	if (door_len != g_cfg.can.door_pos + 1) randomize_pkt(g_cfg.can.door_pos + 1, door_len);
 	send_pkt(CAN_MTU);
 }
 
@@ -195,9 +177,9 @@ void send_unlock(char door) {
 	memset(&cf, 0, sizeof(cf));
 	cf.can_id = door_id;
 	cf.len = door_len;
-	cf.data[door_pos] = door_state;
-	if (door_pos) randomize_pkt(0, door_pos);
-	if (door_len != door_pos + 1) randomize_pkt(door_pos + 1, door_len);
+	cf.data[g_cfg.can.door_pos] = door_state;
+	if (g_cfg.can.door_pos) randomize_pkt(0, g_cfg.can.door_pos);
+	if (door_len != g_cfg.can.door_pos + 1) randomize_pkt(g_cfg.can.door_pos + 1, door_len);
 	send_pkt(CAN_MTU);
 }
 
@@ -210,6 +192,7 @@ void toggle_door(char door) {
 }
 
 void send_speed() {
+	int sp = g_cfg.can.speed_pos;
 	if (model) {
 		if (!strncmp(model, "bmw", 3)) {
 		        int b = ((16 * current_speed)/256) + 208;
@@ -217,29 +200,29 @@ void send_speed() {
 		        memset(&cf, 0, sizeof(cf));
 		        cf.can_id = speed_id;
 		        cf.len = speed_len;
-		        cf.data[speed_pos+1] = (char)b & 0xff;
-		        cf.data[speed_pos] = (char)a & 0xff;
+		        cf.data[sp+1] = (char)b & 0xff;
+		        cf.data[sp] = (char)a & 0xff;
 		        if(current_speed == 0) { // IDLE
-		                cf.data[speed_pos] = rand() % 80;
-		                cf.data[speed_pos+1] = 208;
+		                cf.data[sp] = rand() % 80;
+		                cf.data[sp+1] = 208;
 		        }
-		        if (speed_pos) randomize_pkt(0, speed_pos);
-		        if (speed_len != speed_pos + 2) randomize_pkt(speed_pos+2, speed_len);
+		        if (sp) randomize_pkt(0, sp);
+		        if (speed_len != sp + 2) randomize_pkt(sp+2, speed_len);
 		        send_pkt(CAN_MTU);
 		}
 	} else {
-		int kph = (current_speed / 0.6213751) * 100;
+		int kph = (current_speed / g_cfg.speed.scaling) * g_cfg.speed.divisor;
 		memset(&cf, 0, sizeof(cf));
 		cf.can_id = speed_id;
 		cf.len = speed_len;
-		cf.data[speed_pos+1] = (char)kph & 0xff;
-		cf.data[speed_pos] = (char)(kph >> 8) & 0xff;
+		cf.data[sp+1] = (char)kph & 0xff;
+		cf.data[sp] = (char)(kph >> 8) & 0xff;
 		if(kph == 0) { // IDLE
-			cf.data[speed_pos] = 1;
-			cf.data[speed_pos+1] = rand() % 255+100;
+			cf.data[sp] = 1;
+			cf.data[sp+1] = rand() % 255+100;
 		}
-		if (speed_pos) randomize_pkt(0, speed_pos);
-		if (speed_len != speed_pos + 2) randomize_pkt(speed_pos+2, speed_len);
+		if (sp) randomize_pkt(0, sp);
+		if (speed_len != sp + 2) randomize_pkt(sp+2, speed_len);
 		send_pkt(CAN_MTU);
 	}
 }
@@ -248,9 +231,9 @@ void send_turn_signal() {
 	memset(&cf, 0, sizeof(cf));
 	cf.can_id = signal_id;
 	cf.len = signal_len;
-	cf.data[signal_pos] = signal_state;
-	if(signal_pos) randomize_pkt(0, signal_pos);
-	if(signal_len != signal_pos + 1) randomize_pkt(signal_pos+1, signal_len);
+	cf.data[g_cfg.can.signal_pos] = signal_state;
+	if(g_cfg.can.signal_pos) randomize_pkt(0, g_cfg.can.signal_pos);
+	if(signal_len != g_cfg.can.signal_pos + 1) randomize_pkt(g_cfg.can.signal_pos + 1, signal_len);
 	send_pkt(CAN_MTU);
 }
 
@@ -278,9 +261,9 @@ void checkAccel() {
 void checkTurn() {
 	if(currentTime > lastTurnSignal + 500) {
 		if(turning < 0) {
-			signal_state ^= CAN_LEFT_SIGNAL;
+			signal_state ^= ICSIM_TURN_LEFT;
 		} else if(turning > 0) {
-			signal_state ^= CAN_RIGHT_SIGNAL;
+			signal_state ^= ICSIM_TURN_RIGHT;
 		} else {
 			signal_state = 0;
 		}
@@ -504,29 +487,42 @@ int main(int argc, char *argv[]) {
        return 1;
   }
 
-  door_id = DEFAULT_DOOR_ID;
-  signal_id = DEFAULT_SIGNAL_ID;
-  speed_id = DEFAULT_SPEED_ID;
+  /* Load vehicle configuration from TOML file */
+  if (model) {
+	if (!strncmp(model, "bmw", 3)) {
+		icsim_config_load(&g_cfg, "models/bmw_x1.toml");
+	} else if (strchr(model, '.')) {
+		icsim_config_load(&g_cfg, model);
+	} else {
+		char path[256];
+		snprintf(path, sizeof(path), "models/%s.toml", model);
+		if (icsim_config_load(&g_cfg, path) != 0)
+			icsim_config_defaults(&g_cfg);
+	}
+  } else {
+	icsim_config_defaults(&g_cfg);
+  }
+  printf("Vehicle: %s (%s)\n", g_cfg.name, g_cfg.description);
+
+  door_id   = g_cfg.can.door_id;
+  signal_id = g_cfg.can.signal_id;
+  speed_id  = g_cfg.can.speed_id;
+  door_len  = g_cfg.can.door_pos + 1;
+  signal_len = g_cfg.can.signal_pos + 1;
+  speed_len  = g_cfg.can.speed_pos + 2;
 
   if (seed) {
 	srand(seed);
         door_id = (rand() % 2046) + 1;
         signal_id = (rand() % 2046) + 1;
         speed_id = (rand() % 2046) + 1;
-        door_pos = rand() % 9;
-        signal_pos = rand() % 9;
-        speed_pos = rand() % 8;
+        g_cfg.can.door_pos = rand() % 9;
+        g_cfg.can.signal_pos = rand() % 9;
+        g_cfg.can.speed_pos = rand() % 8;
         printf("Seed: %d\n", seed);
-	door_len = door_pos + 1;
-	signal_len = signal_pos + 1;
-	speed_len = speed_pos + 2;
-  } else if (model) {
-	if (!strncmp(model, "bmw", 3)) {
-		speed_id = MODEL_BMW_X1_SPEED_ID;
-		speed_pos = MODEL_BMW_X1_SPEED_BYTE;
-	} else {
-		printf("Invalid model.  Valid entries are: bmw\n");
-	}
+	door_len = g_cfg.can.door_pos + 1;
+	signal_len = g_cfg.can.signal_pos + 1;
+	speed_len = g_cfg.can.speed_pos + 2;
   }
 
   if(difficulty > 0) {
@@ -635,46 +631,46 @@ int main(int argc, char *argv[]) {
 			break;
 		    case SDLK_LSHIFT:
 			lock_enabled = 1;
-			if(!event.key.repeat) send_lock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
+			if(!event.key.repeat) send_lock(ICSIM_DOOR1 | ICSIM_DOOR2 | ICSIM_DOOR3 | ICSIM_DOOR4);
 			break;
 		    case SDLK_RSHIFT:
 			unlock_enabled = 1;
-			if(!event.key.repeat) send_unlock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
+			if(!event.key.repeat) send_unlock(ICSIM_DOOR1 | ICSIM_DOOR2 | ICSIM_DOOR3 | ICSIM_DOOR4);
 			break;
 		    case SDLK_a:
 			if(lock_enabled) {
-				send_lock(CAN_DOOR1_LOCK);
+				send_lock(ICSIM_DOOR1);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR1_LOCK);
+				send_unlock(ICSIM_DOOR1);
 			} else if(!event.key.repeat) {
-				toggle_door(CAN_DOOR1_LOCK);
+				toggle_door(ICSIM_DOOR1);
 			}
 			break;
 		    case SDLK_b:
 			if(lock_enabled) {
-				send_lock(CAN_DOOR2_LOCK);
+				send_lock(ICSIM_DOOR2);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR2_LOCK);
+				send_unlock(ICSIM_DOOR2);
 			} else if(!event.key.repeat) {
-				toggle_door(CAN_DOOR2_LOCK);
+				toggle_door(ICSIM_DOOR2);
 			}
 			break;
 		    case SDLK_x:
 			if(lock_enabled) {
-				send_lock(CAN_DOOR3_LOCK);
+				send_lock(ICSIM_DOOR3);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR3_LOCK);
+				send_unlock(ICSIM_DOOR3);
 			} else if(!event.key.repeat) {
-				toggle_door(CAN_DOOR3_LOCK);
+				toggle_door(ICSIM_DOOR3);
 			}
 			break;
 		    case SDLK_y:
 			if(lock_enabled) {
-				send_lock(CAN_DOOR4_LOCK);
+				send_lock(ICSIM_DOOR4);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR4_LOCK);
+				send_unlock(ICSIM_DOOR4);
 			} else if(!event.key.repeat) {
-				toggle_door(CAN_DOOR4_LOCK);
+				toggle_door(ICSIM_DOOR4);
 			}
 			break;
 		}
@@ -719,33 +715,33 @@ int main(int argc, char *argv[]) {
                 button = event.jbutton.button;
 		if(button == gButtonLock) {
 			lock_enabled = 1;
-			if(unlock_enabled) send_lock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
+			if(unlock_enabled) send_lock(ICSIM_DOOR1 | ICSIM_DOOR2 | ICSIM_DOOR3 | ICSIM_DOOR4);
 		} else if(button == gButtonUnlock) {
 			unlock_enabled = 1;
-			if(lock_enabled) send_unlock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
+			if(lock_enabled) send_unlock(ICSIM_DOOR1 | ICSIM_DOOR2 | ICSIM_DOOR3 | ICSIM_DOOR4);
 		} else if(button == gButtonA) {
 			if(lock_enabled) {
-				send_lock(CAN_DOOR1_LOCK);
+				send_lock(ICSIM_DOOR1);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR1_LOCK);
+				send_unlock(ICSIM_DOOR1);
 			}
 		} else if (button == gButtonB) {
 			if(lock_enabled) {
-				send_lock(CAN_DOOR2_LOCK);
+				send_lock(ICSIM_DOOR2);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR2_LOCK);
+				send_unlock(ICSIM_DOOR2);
 			}
 		} else if (button == gButtonX) {
 			if(lock_enabled) {
-				send_lock(CAN_DOOR3_LOCK);
+				send_lock(ICSIM_DOOR3);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR3_LOCK);
+				send_unlock(ICSIM_DOOR3);
 			}
 		} else if (button == gButtonY) {
 			if(lock_enabled) {
-				send_lock(CAN_DOOR4_LOCK);
+				send_lock(ICSIM_DOOR4);
 			} else if(unlock_enabled) {
-				send_unlock(CAN_DOOR4_LOCK);
+				send_unlock(ICSIM_DOOR4);
 			}
 		} else if (button == gButtonStart) {
 		} else {
