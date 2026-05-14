@@ -38,6 +38,27 @@ length = 1
 left_mask = 0x01
 right_mask = 0x02
 
+[signals.rpm]
+rpm_id = "0x0AA"
+rpm_byte = 4
+length = 2
+scaling = 1.0
+divisor = 4
+
+[signals.temp]
+temp_id = "0x1B8"
+temp_byte = 2
+length = 1
+scaling = 1.0
+divisor = 1
+
+[signals.fuel]
+fuel_id = "0x2C8"
+fuel_byte = 5
+length = 1
+scaling = 1.0
+divisor = 1
+
 [dashboard]
 width = 692
 height = 329

@@ -158,6 +158,23 @@ Default CAN IDs:
 - Speed:  `0x244`
 - Doors:  `0x19B`
 - Signals: `0x188`
+- RPM:    `0x0AA`
+- Coolant: `0x1B8`
+- Fuel:   `0x2C8`
+
+### New signal controls
+
+| Key | Action |
+|-----|--------|
+| `1` / `2` | RPM ±500 |
+| `3` / `4` | Coolant temp ±5°C |
+| `5` / `6` | Fuel level ±5% |
+| `↑` | Accelerate |
+| `←` / `→` | Turn signals |
+
+The IC simulator displays RPM, coolant temp, and fuel as colored bar
+indicators below the speedometer. Temp turns red above 105°C, fuel turns
+red below 15%.
 
 ### Controls keyboard mapping
 
@@ -289,3 +306,16 @@ To observe the bus during training, add the SavvyCAN bridge:
 ```
 
 Then connect SavvyCAN to `127.0.0.1:23`.
+
+Pre-recorded scenarios are available in `scenarios/`:
+
+```
+  icsim.exe -P scenarios/cold_start.asc vcan0
+  icsim.exe -P scenarios/highway.asc vcan0
+  icsim.exe -P scenarios/emergency.asc vcan0
+```
+
+Replay a scenario and watch the dashboard react — cold start warmup,
+highway lane changes with turn signals, or emergency hard brake with
+hazard lights. Use SavvyCAN or the WebSocket dashboard to inspect the
+CAN traffic during playback.

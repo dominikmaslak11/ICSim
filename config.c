@@ -86,6 +86,27 @@ void icsim_config_defaults(icsim_config_t *cfg)
 	cfg->turn.left_mask  = ICSIM_TURN_LEFT;
 	cfg->turn.right_mask = ICSIM_TURN_RIGHT;
 
+	/* RPM */
+	cfg->rpm.rpm_id  = 0x0AA;
+	cfg->rpm.rpm_pos = 4;
+	cfg->rpm.length  = 2;
+	cfg->rpm.scaling = 1.0;
+	cfg->rpm.divisor = 4;
+
+	/* Coolant temperature */
+	cfg->temp.temp_id  = 0x1B8;
+	cfg->temp.temp_pos = 2;
+	cfg->temp.length   = 1;
+	cfg->temp.scaling  = 1.0;
+	cfg->temp.divisor  = 1;
+
+	/* Fuel level */
+	cfg->fuel.fuel_id  = 0x2C8;
+	cfg->fuel.fuel_pos = 5;
+	cfg->fuel.length   = 1;
+	cfg->fuel.scaling  = 1.0;
+	cfg->fuel.divisor  = 1;
+
 	/* Dashboard layout */
 	cfg->dashboard.width  = 692;
 	cfg->dashboard.height = 329;
@@ -188,6 +209,39 @@ int icsim_config_load(icsim_config_t *cfg, const char *path)
 		cfg->turn.length     = parse_int(tturn, "length", 1);
 		cfg->turn.left_mask  = (unsigned char)parse_int(tturn, "left_mask", ICSIM_TURN_LEFT);
 		cfg->turn.right_mask = (unsigned char)parse_int(tturn, "right_mask", ICSIM_TURN_RIGHT);
+	}
+
+	/* --- [signals.rpm] --- */
+	toml_table_t *trpm = toml_table_in(root, "signals.rpm");
+	if (trpm) {
+		parse_string_into(trpm, "rpm_id", hexbuf, sizeof(hexbuf), "0x0AA");
+		cfg->rpm.rpm_id  = parse_hex(hexbuf);
+		cfg->rpm.rpm_pos = parse_int(trpm, "rpm_byte", 4);
+		cfg->rpm.length  = parse_int(trpm, "length", 2);
+		cfg->rpm.scaling = parse_double(trpm, "scaling", 1.0);
+		cfg->rpm.divisor = parse_int(trpm, "divisor", 4);
+	}
+
+	/* --- [signals.temp] --- */
+	toml_table_t *ttemp = toml_table_in(root, "signals.temp");
+	if (ttemp) {
+		parse_string_into(ttemp, "temp_id", hexbuf, sizeof(hexbuf), "0x1B8");
+		cfg->temp.temp_id  = parse_hex(hexbuf);
+		cfg->temp.temp_pos = parse_int(ttemp, "temp_byte", 2);
+		cfg->temp.length   = parse_int(ttemp, "length", 1);
+		cfg->temp.scaling  = parse_double(ttemp, "scaling", 1.0);
+		cfg->temp.divisor  = parse_int(ttemp, "divisor", 1);
+	}
+
+	/* --- [signals.fuel] --- */
+	toml_table_t *tfuel = toml_table_in(root, "signals.fuel");
+	if (tfuel) {
+		parse_string_into(tfuel, "fuel_id", hexbuf, sizeof(hexbuf), "0x2C8");
+		cfg->fuel.fuel_id  = parse_hex(hexbuf);
+		cfg->fuel.fuel_pos = parse_int(tfuel, "fuel_byte", 5);
+		cfg->fuel.length    = parse_int(tfuel, "length", 1);
+		cfg->fuel.scaling   = parse_double(tfuel, "scaling", 1.0);
+		cfg->fuel.divisor   = parse_int(tfuel, "divisor", 1);
 	}
 
 	/* --- [dashboard] --- */

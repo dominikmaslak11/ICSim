@@ -15,11 +15,14 @@
 extern "C" {
 #endif
 
-/* Supported signal types (expand as new signals are added) */
+/* Supported signal types */
 enum {
 	ICSIM_SIGNAL_SPEED = 0,
 	ICSIM_SIGNAL_DOORS,
 	ICSIM_SIGNAL_TURN,
+	ICSIM_SIGNAL_RPM,
+	ICSIM_SIGNAL_TEMP,
+	ICSIM_SIGNAL_FUEL,
 	ICSIM_SIGNAL_COUNT
 };
 
@@ -64,6 +67,30 @@ typedef struct {
 } icsim_signal_turn_t;
 
 typedef struct {
+	canid_t rpm_id;
+	int rpm_pos;
+	int length;
+	double scaling;
+	int divisor;
+} icsim_signal_rpm_t;
+
+typedef struct {
+	canid_t temp_id;
+	int temp_pos;
+	int length;
+	double scaling;
+	int divisor;
+} icsim_signal_temp_t;
+
+typedef struct {
+	canid_t fuel_id;
+	int fuel_pos;
+	int length;
+	double scaling;
+	int divisor;
+} icsim_signal_fuel_t;
+
+typedef struct {
 	int width;
 	int height;
 } icsim_dashboard_t;
@@ -86,6 +113,9 @@ typedef struct {
 	icsim_signal_speed_t speed;
 	icsim_signal_doors_t  doors;
 	icsim_signal_turn_t   turn;
+	icsim_signal_rpm_t    rpm;
+	icsim_signal_temp_t   temp;
+	icsim_signal_fuel_t   fuel;
 
 	icsim_dashboard_t    dashboard;
 	icsim_speedometer_t  speedometer;

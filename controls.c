@@ -116,8 +116,12 @@ char door_state = 0xf;
 char signal_state = 0;
 int throttle = 0;
 float current_speed = 0;
+int engine_rpm = 800;
+int coolant_temp = 80;
+int fuel_level = 75;
 int turning = 0;
 int door_id, signal_id, speed_id;
+int rpm_id, temp_id, fuel_id;
 int currentTime;
 int lastAccel = 0;
 int lastTurnSignal = 0;
@@ -234,6 +238,34 @@ void send_turn_signal() {
 	cf.data[g_cfg.can.signal_pos] = signal_state;
 	if(g_cfg.can.signal_pos) randomize_pkt(0, g_cfg.can.signal_pos);
 	if(signal_len != g_cfg.can.signal_pos + 1) randomize_pkt(g_cfg.can.signal_pos + 1, signal_len);
+	send_pkt(CAN_MTU);
+}
+
+void send_rpm() {
+	int raw = (int)((double)engine_rpm * (double)g_cfg.rpm.divisor / g_cfg.rpm.scaling);
+	memset(&cf, 0, sizeof(cf));
+	cf.can_id = rpm_id;
+	cf.len = g_cfg.rpm.length + g_cfg.rpm.rpm_pos;
+	cf.data[g_cfg.rpm.rpm_pos + 1] = (char)raw & 0xff;
+	cf.data[g_cfg.rpm.rpm_pos] = (char)(raw >> 8) & 0xff;
+	send_pkt(CAN_MTU);
+}
+
+void send_temp() {
+	int raw = (int)((double)coolant_temp * (double)g_cfg.temp.divisor / g_cfg.temp.scaling);
+	memset(&cf, 0, sizeof(cf));
+	cf.can_id = temp_id;
+	cf.len = g_cfg.temp.length + g_cfg.temp.temp_pos;
+	cf.data[g_cfg.temp.temp_pos] = (char)raw & 0xff;
+	send_pkt(CAN_MTU);
+}
+
+void send_fuel() {
+	int raw = (int)((double)fuel_level * (double)g_cfg.fuel.divisor / g_cfg.fuel.scaling);
+	memset(&cf, 0, sizeof(cf));
+	cf.can_id = fuel_id;
+	cf.len = g_cfg.fuel.length + g_cfg.fuel.fuel_pos;
+	cf.data[g_cfg.fuel.fuel_pos] = (char)raw & 0xff;
 	send_pkt(CAN_MTU);
 }
 
@@ -507,6 +539,9 @@ int main(int argc, char *argv[]) {
   door_id   = g_cfg.can.door_id;
   signal_id = g_cfg.can.signal_id;
   speed_id  = g_cfg.can.speed_id;
+  rpm_id    = g_cfg.rpm.rpm_id;
+  temp_id   = g_cfg.temp.temp_id;
+  fuel_id   = g_cfg.fuel.fuel_id;
   door_len  = g_cfg.can.door_pos + 1;
   signal_len = g_cfg.can.signal_pos + 1;
   speed_len  = g_cfg.can.speed_pos + 2;
@@ -672,6 +707,36 @@ int main(int argc, char *argv[]) {
 			} else if(!event.key.repeat) {
 				toggle_door(ICSIM_DOOR4);
 			}
+			break;
+		    case SDLK_1:
+			engine_rpm += 500;
+			if (engine_rpm > 7000) engine_rpm = 7000;
+			send_rpm();
+			break;
+		    case SDLK_2:
+			engine_rpm -= 500;
+			if (engine_rpm < 0) engine_rpm = 0;
+			send_rpm();
+			break;
+		    case SDLK_3:
+			coolant_temp += 5;
+			if (coolant_temp > 120) coolant_temp = 120;
+			send_temp();
+			break;
+		    case SDLK_4:
+			coolant_temp -= 5;
+			if (coolant_temp < 60) coolant_temp = 60;
+			send_temp();
+			break;
+		    case SDLK_5:
+			fuel_level += 5;
+			if (fuel_level > 100) fuel_level = 100;
+			send_fuel();
+			break;
+		    case SDLK_6:
+			fuel_level -= 5;
+			if (fuel_level < 0) fuel_level = 0;
+			send_fuel();
 			break;
 		}
 	   	break;

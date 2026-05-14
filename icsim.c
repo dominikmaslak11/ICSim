@@ -38,6 +38,9 @@ int debug = 0;
 int randomize = 0;
 int seed = 0;
 long current_speed = 0;
+int engine_rpm = 800;
+int coolant_temp = 80;
+int fuel_level = 75;
 int door_status[4];
 int turn_status[2];
 char *model = NULL;   /* model name for BMW-specific speed formula */
@@ -203,6 +206,53 @@ void update_turn_signals() {
   }
 }
 
+/* Updates engine RPM bar */
+void update_rpm_bar() {
+  SDL_Rect bg = {150, 250, 120, 12};
+  SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+  SDL_RenderFillRect(renderer, &bg);
+
+  int rpm_clamped = engine_rpm;
+  if (rpm_clamped < 0) rpm_clamped = 0;
+  if (rpm_clamped > 7000) rpm_clamped = 7000;
+  int w = (rpm_clamped * 120) / 7000;
+  SDL_Rect bar = {150, 250, w, 12};
+  SDL_SetRenderDrawColor(renderer, 0, 200, 0, 255);
+  SDL_RenderFillRect(renderer, &bar);
+}
+
+/* Updates coolant temp bar */
+void update_temp_bar() {
+  SDL_Rect bg = {150, 268, 120, 12};
+  SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+  SDL_RenderFillRect(renderer, &bg);
+
+  int t = coolant_temp;
+  if (t < 60) t = 60;
+  if (t > 120) t = 120;
+  int w = ((t - 60) * 120) / 60;
+  SDL_Rect bar = {150, 268, w, 12};
+  SDL_SetRenderDrawColor(renderer, t > 105 ? 200 : 0,
+                         t > 105 ? 50 : 150, 0, 255);
+  SDL_RenderFillRect(renderer, &bar);
+}
+
+/* Updates fuel level bar */
+void update_fuel_bar() {
+  SDL_Rect bg = {150, 286, 120, 12};
+  SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+  SDL_RenderFillRect(renderer, &bg);
+
+  int f = fuel_level;
+  if (f < 0) f = 0;
+  if (f > 100) f = 100;
+  int w = (f * 120) / 100;
+  SDL_Rect bar = {150, 286, w, 12};
+  SDL_SetRenderDrawColor(renderer, f < 15 ? 200 : 0,
+                         f < 15 ? 100 : 150, 0, 255);
+  SDL_RenderFillRect(renderer, &bar);
+}
+
 /* Redraws the IC updating everything 
  * Slowest way to go.  Should only use on init
  */
@@ -211,6 +261,9 @@ void redraw_ic() {
   update_speed();
   update_doors();
   update_turn_signals();
+  update_rpm_bar();
+  update_temp_bar();
+  update_fuel_bar();
   SDL_RenderPresent(renderer);
   screen_dirty = 0;
 }
@@ -230,6 +283,37 @@ void update_speed_status(struct canfd_frame *cf, int maxdlen) {
 	  current_speed = speed * g_cfg.speed.scaling;
   }
   update_speed();
+  screen_dirty = 1;
+}
+
+/* Parses CAN frame and updates RPM */
+void update_rpm_status(struct canfd_frame *cf, int maxdlen) {
+  int len = (cf->len > maxdlen) ? maxdlen : cf->len;
+  int pos = g_cfg.rpm.rpm_pos;
+  if (len <= pos + 1) return;
+  int raw = (cf->data[pos] << 8) | cf->data[pos + 1];
+  engine_rpm = (int)((double)raw * g_cfg.rpm.scaling / (double)g_cfg.rpm.divisor);
+  update_rpm_bar();
+  screen_dirty = 1;
+}
+
+/* Parses CAN frame and updates coolant temp */
+void update_temp_status(struct canfd_frame *cf, int maxdlen) {
+  int len = (cf->len > maxdlen) ? maxdlen : cf->len;
+  int pos = g_cfg.temp.temp_pos;
+  if (len <= pos) return;
+  coolant_temp = (int)((double)cf->data[pos] * g_cfg.temp.scaling / (double)g_cfg.temp.divisor);
+  update_temp_bar();
+  screen_dirty = 1;
+}
+
+/* Parses CAN frame and updates fuel level */
+void update_fuel_status(struct canfd_frame *cf, int maxdlen) {
+  int len = (cf->len > maxdlen) ? maxdlen : cf->len;
+  int pos = g_cfg.fuel.fuel_pos;
+  if (len <= pos) return;
+  fuel_level = (int)((double)cf->data[pos] * g_cfg.fuel.scaling / (double)g_cfg.fuel.divisor);
+  update_fuel_bar();
   screen_dirty = 1;
 }
 
@@ -302,6 +386,7 @@ int main(int argc, char *argv[]) {
   size_t mtu;
   int seed = 0;
   canid_t door_id, signal_id, speed_id;
+  canid_t rpm_id, temp_id, fuel_id;
   SDL_Event event;
 
   while ((opt = getopt(argc, argv, "rs:dm:h?R:P:")) != -1) {
@@ -393,6 +478,9 @@ int main(int argc, char *argv[]) {
   door_id   = g_cfg.can.door_id;
   signal_id = g_cfg.can.signal_id;
   speed_id  = g_cfg.can.speed_id;
+  rpm_id    = g_cfg.rpm.rpm_id;
+  temp_id   = g_cfg.temp.temp_id;
+  fuel_id   = g_cfg.fuel.fuel_id;
 
   if (randomize || seed) {
 	if(randomize) seed = time(NULL);
@@ -483,6 +571,9 @@ int main(int argc, char *argv[]) {
       if(frame.can_id == door_id) update_door_status(&frame, maxdlen);
       if(frame.can_id == signal_id) update_signal_status(&frame, maxdlen);
       if(frame.can_id == speed_id) update_speed_status(&frame, maxdlen);
+      if(frame.can_id == rpm_id) update_rpm_status(&frame, maxdlen);
+      if(frame.can_id == temp_id) update_temp_status(&frame, maxdlen);
+      if(frame.can_id == fuel_id) update_fuel_status(&frame, maxdlen);
       if (can_recorder) can_log_record(can_recorder, &frame);
       processed++;
     }
