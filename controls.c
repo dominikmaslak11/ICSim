@@ -144,7 +144,6 @@ int seed = 0;
 int debug = 0;
 
 int play_id;
-int kk = 0;
 char data_file[256];
 SDL_GameController *gGameController = NULL;
 SDL_Joystick *gJoystick = NULL;
@@ -153,8 +152,6 @@ SDL_Renderer *renderer = NULL;
 SDL_Texture *base_texture = NULL;
 int gControllerType = USB_CONTROLLER;
 volatile int traffic_running = 1;
-
-void kk_check(int);
 
 // Adds data dir to file name
 // Uses a single pointer so not to have a memory leak
@@ -320,10 +317,8 @@ void accelerate(int value) {
 void turn(int value) {
 	if(value < -JOYSTICK_DEAD_ZONE) {
 		turning = -1;
-		kk_check(SDLK_LEFT);
 	} else if(value > JOYSTICK_DEAD_ZONE) {
 		turning = 1;
-		kk_check(SDLK_RIGHT);
 	} else {
 		turning = 0;
 	}
@@ -331,43 +326,8 @@ void turn(int value) {
 
 void ud(int value) {
 	if(value < -JOYSTICK_DEAD_ZONE) {
-		kk_check(SDLK_UP);
 	} else if(value > JOYSTICK_DEAD_ZONE) {
-		kk_check(SDLK_DOWN);
 	}
-}
-
-void kkpay() {
-  printf("KK\n");
-}
-
-void kk_check(int k) {
-  switch(k) {
-    case SDLK_RETURN:
-	if(kk == 0xa) kkpay();
-	kk = 0;
-	break;
-    case SDLK_UP:
-	kk = (kk < 2) ? kk+1 : 0;
-	break;
-    case SDLK_DOWN:
-	kk = (kk > 1 && kk < 4) ? kk+1 : 0;
-	break;
-    case SDLK_LEFT:
-	kk = (kk == 4 || kk == 6) ? kk+1 : 0;
-	break;
-    case SDLK_RIGHT:
-	kk = (kk == 5 || kk == 7) ? kk+1 : 0;
-	break;
-    case SDLK_a:
-	kk = kk == 9 ? kk+1 : 0;
-	break;
-    case SDLK_b:
-	kk = kk == 8 ? kk+1 : 0;
-	break;
-    default:
-	kk = 0;
-  }
 }
 
 // Plays background can traffic
@@ -718,7 +678,6 @@ int main(int argc, char *argv[]) {
 			}
 			break;
 		}
-		kk_check(event.key.keysym.sym);
 	   	break;
 	    case SDL_KEYUP:
 		switch(event.key.keysym.sym) {
@@ -770,30 +729,25 @@ int main(int argc, char *argv[]) {
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR1_LOCK);
 			}
-			kk_check(SDLK_a);
 		} else if (button == gButtonB) {
 			if(lock_enabled) {
 				send_lock(CAN_DOOR2_LOCK);
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR2_LOCK);
 			}
-			kk_check(SDLK_b);
 		} else if (button == gButtonX) {
 			if(lock_enabled) {
 				send_lock(CAN_DOOR3_LOCK);
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR3_LOCK);
 			}
-			kk_check(SDLK_x);
 		} else if (button == gButtonY) {
 			if(lock_enabled) {
 				send_lock(CAN_DOOR4_LOCK);
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR4_LOCK);
 			}
-			kk_check(SDLK_y);
 		} else if (button == gButtonStart) {
-			kk_check(SDLK_RETURN);
 		} else {
 			if(debug) printf("Unassigned button: %d\n", event.jbutton.button);
 		}

@@ -1,0 +1,55 @@
+# ICSim vehicle configuration
+# Load with: icsim -m models/default.toml
+# If no model is specified, built-in hardcoded defaults are used.
+
+[vehicle]
+name = "Default"
+description = "Stock ICSim vehicle with speedometer, door indicators, and turn signals"
+
+[can]
+# CAN arbitration IDs (hex)
+speed_id = "0x244"
+door_id = "0x19B"
+signal_id = "0x188"
+
+# Byte offsets within the CAN data field (0-based)
+speed_byte = 3
+door_byte = 2
+signal_byte = 0
+
+[signals.speed]
+# Speed occupies 2 bytes (speed_byte and speed_byte+1)
+# Raw value = (data[byte] << 8) | data[byte+1]
+# MPH = (raw / divisor) * scaling
+length = 2
+scaling = 0.6213751
+divisor = 100
+
+[signals.doors]
+# Each door is one bit in the door_byte
+length = 1
+door1_mask = 0x01
+door2_mask = 0x02
+door3_mask = 0x04
+door4_mask = 0x08
+
+[signals.turn]
+length = 1
+left_mask = 0x01
+right_mask = 0x02
+
+[dashboard]
+width = 692
+height = 329
+
+[dashboard.speedometer]
+x = 200
+y = 80
+width = 300
+height = 130
+needle_center_x = 135
+needle_center_y = 20
+angle_min = 0
+angle_max = 180
+value_min = 0
+value_max = 280

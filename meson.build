@@ -20,8 +20,10 @@ endif
 
 common_sources = [
     'can_bus.c',
+    'config.c',
     'getopt_compat.c',
     'lib.c',
+    'toml.c',
 ]
 
 subdir('art')
