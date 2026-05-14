@@ -319,3 +319,38 @@ Replay a scenario and watch the dashboard react — cold start warmup,
 highway lane changes with turn signals, or emergency hard brake with
 hazard lights. Use SavvyCAN or the WebSocket dashboard to inspect the
 CAN traffic during playback.
+
+### Headless mode
+
+Run ICSim without a GUI — ideal for servers, CI/CD, and Docker:
+
+```
+  icsim.exe --headless vcan0
+  icsim.exe --headless --duration 30 vcan0   # run for 30 seconds
+```
+
+State changes (speed, RPM, doors, signals, temperature, fuel) are
+printed to stdout. Combine with recording for automated testing:
+
+```
+  icsim.exe --headless -P scenarios/emergency.asc -R output.asc vcan0
+```
+
+### Docker
+
+Build and run the full stack:
+
+```
+  docker build -t icsim .
+  docker run --rm -p 23:23 -p 8080:8080 icsim
+```
+
+This starts ICSim (headless), the GVRET bridge, and the WebSocket
+dashboard all in one container. SavvyCAN connects to port 23,
+browser to `http://localhost:8080`.
+
+Or use docker compose:
+
+```
+  docker compose up
+```

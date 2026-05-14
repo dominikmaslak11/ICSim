@@ -9,6 +9,9 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 
@@ -46,6 +49,8 @@ int turn_status[2];
 char *model = NULL;   /* model name for BMW-specific speed formula */
 char *record_path = NULL;
 char *replay_path = NULL;
+int headless = 0;
+int headless_duration = 0;  /* seconds, 0 = run forever */
 can_log_t *can_recorder = NULL;
 can_log_t *can_replayer = NULL;
 char data_file[256];
@@ -373,6 +378,8 @@ void Usage(char *msg) {
   printf("\t-m\tmodel FILE or name  (Ex: -m bmw, -m models/default.toml)\n");
   printf("\t-R FILE\trecord CAN frames to ASC file\n");
   printf("\t-P FILE\treplay CAN frames from ASC file\n");
+  printf("\t--headless\trun without GUI (logs state to stdout)\n");
+  printf("\t--duration SEC\trun for N seconds then exit (headless default: forever)\n");
   exit(1);
 }
 
@@ -415,6 +422,14 @@ int main(int argc, char *argv[]) {
 		Usage(NULL);
 		break;
     }
+  }
+
+  /* Parse long options (not handled by getopt) */
+  for (int i = 1; i < argc; i++) {
+	if (strcmp(argv[i], "--headless") == 0)
+		headless = 1;
+	else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc)
+		headless_duration = atoi(argv[++i]);
   }
 
   if (optind >= argc) Usage("You must specify at least one can device");
@@ -505,6 +520,105 @@ int main(int argc, char *argv[]) {
 	}
   }
 
+  /* --- Headless mode: skip SDL, process CAN in text loop --- */
+  if (headless) {
+	printf("ICSim headless mode — bus %s, vehicle %s\n",
+	       argv[optind], g_cfg.name);
+	if (headless_duration > 0)
+		printf("Running for %d seconds...\n", headless_duration);
+
+	Uint32 t0 = SDL_GetTicks();
+	Uint32 t_end = t0 + (Uint32)headless_duration * 1000;
+	int last_spd = -1, last_rpm = -1, last_tmp = -1, last_flu = -1;
+	int last_door[4] = {-1,-1,-1,-1};
+	int last_turn[2] = {-1,-1};
+
+	while (1) {
+		/* Poll CAN frames */
+		for (int batch = 0; batch < 64; batch++) {
+			struct canfd_frame f;
+			size_t mtu = 0;
+			if (can_bus_recv(can, &f, &mtu) < 0) {
+				if (can_bus_error_is_would_block()) break;
+				fprintf(stderr, "%s\n", can_bus_error());
+				goto headless_done;
+			}
+			int md = (mtu == CAN_MTU) ? CAN_MAX_DLEN : CANFD_MAX_DLEN;
+			if(f.can_id == door_id) update_door_status(&f, md);
+			if(f.can_id == signal_id) update_signal_status(&f, md);
+			if(f.can_id == speed_id) update_speed_status(&f, md);
+			if(f.can_id == rpm_id) update_rpm_status(&f, md);
+			if(f.can_id == temp_id) update_temp_status(&f, md);
+			if(f.can_id == fuel_id) update_fuel_status(&f, md);
+			if(can_recorder) can_log_record(can_recorder, &f);
+		}
+
+		/* Replay injection */
+		if (can_replayer) {
+			double toff; size_t rmtu; struct canfd_frame rf;
+			while (can_log_replay_next(can_replayer, &rf, &toff, &rmtu)) {
+				Uint32 now = SDL_GetTicks();
+				if ((double)(now - t0) / 1000.0 < toff) break;
+				can_bus_send(can, &rf, rmtu);
+				if(can_recorder) can_log_record(can_recorder, &rf);
+			}
+		}
+
+		/* Print changed state */
+		int changed = 0;
+		if(current_speed != last_spd) {
+			printf("speed=%ld ", current_speed);
+			last_spd = (int)current_speed; changed = 1;
+		}
+		if(engine_rpm != last_rpm) {
+			printf("rpm=%d ", engine_rpm);
+			last_rpm = engine_rpm; changed = 1;
+		}
+		if(coolant_temp != last_tmp) {
+			printf("temp=%dC ", coolant_temp);
+			last_tmp = coolant_temp; changed = 1;
+		}
+		if(fuel_level != last_flu) {
+			printf("fuel=%d%% ", fuel_level);
+			last_flu = fuel_level; changed = 1;
+		}
+		for (int d = 0; d < 4; d++) {
+			if (door_status[d] != last_door[d]) {
+				printf("door%d=%s ", d+1,
+				       door_status[d] == DOOR_UNLOCKED ? "open" : "locked");
+				last_door[d] = door_status[d]; changed = 1;
+			}
+		}
+		for (int t = 0; t < 2; t++) {
+			if (turn_status[t] != last_turn[t]) {
+				printf("turn_%s=%s ", t ? "R" : "L",
+				       turn_status[t] == ON ? "on" : "off");
+				last_turn[t] = turn_status[t]; changed = 1;
+			}
+		}
+		if (changed) printf("\n");
+
+#ifdef _WIN32
+		Sleep(10);
+#else
+		{ struct timespec ts = {0, 10000000}; nanosleep(&ts, NULL); }
+#endif
+
+		/* Duration check */
+		if (headless_duration > 0) {
+			Uint32 now = SDL_GetTicks();
+			if (now >= t_end) break;
+		}
+	}
+
+headless_done:
+	if (can_recorder) can_log_close(can_recorder);
+	if (can_replayer) can_log_close(can_replayer);
+	can_bus_close(can);
+	return 0;
+  }
+
+  /* --- GUI mode --- */
   SDL_Window *window = NULL;
   if(SDL_Init ( SDL_INIT_VIDEO ) < 0 ) {
 	printf("SDL Could not initializes\n");

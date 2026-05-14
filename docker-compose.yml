@@ -1,0 +1,34 @@
+# ICSim full stack for CAN hacking training
+# Start: docker compose up
+#
+# Services:
+#   icsim         — headless CAN simulator (state logs to stdout)
+#   gvrnet        — GVRET bridge for SavvyCAN (port 23)
+#   websocket     — browser dashboard (port 8080)
+#   candump       — optional CAN frame logger (ASC format)
+#
+# All services share the same virtual CAN bus (vcan0 via UDP multicast).
+
+services:
+  icsim:
+    build: .
+    ports:
+      - "23:23"
+      - "8080:8080"
+    command: ["vcan0"]
+    restart: unless-stopped
+    # For recording sessions:
+    # command: ["--headless", "-R", "/data/session.asc", "vcan0"]
+    volumes:
+      - ./recordings:/data
+
+  # Optional: standalone candump logger
+  candump:
+    build: .
+    entrypoint: ["/app/candump"]
+    command: ["vcan0"]
+    network_mode: "service:icsim"
+    depends_on:
+      - icsim
+    profiles:
+      - logging
