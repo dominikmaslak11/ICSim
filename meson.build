@@ -7,20 +7,25 @@ project(
     ]
 )
 
-find_program('candump', required: true)
 deps = [
     dependency('sdl2', required: true),
     dependency('SDL2_image', required: true)
 ]
 
-bundled_lib = custom_target('copy-lib',
-                            output: 'lib.o',
-                            input: 'lib.o',
-                            command : [ 'cp', '@INPUT@', '@OUTPUT@' ],
-)
+cc = meson.get_compiler('c')
+socket_deps = []
+if host_machine.system() == 'windows'
+    socket_deps += cc.find_library('ws2_32', required: true)
+endif
+
+common_sources = [
+    'can_bus.c',
+    'getopt_compat.c',
+    'lib.c',
+]
 
 subdir('art')
 subdir('data')
 
-executable('icsim', ['icsim.c', bundled_lib], dependencies: deps)
-executable('controls', 'controls.c', dependencies: deps)
+executable('icsim', ['icsim.c', common_sources], dependencies: deps + socket_deps)
+executable('controls', ['controls.c', common_sources], dependencies: deps + socket_deps)

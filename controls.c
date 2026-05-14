@@ -7,18 +7,18 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <getopt.h>
-#include <signal.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
-#include <net/if.h>
-#include <linux/can.h>
-#include <linux/can/raw.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
+
+#ifndef _WIN32
+#include <signal.h>
+#include <unistd.h>
+#endif
+
+#include "getopt_compat.h"
+#include "can_platform.h"
 
 #ifndef DATA_DIR
 #define DATA_DIR "./data/"
@@ -114,10 +114,10 @@ int gJoyZ = JOY_UNKNOWN;
 const int JOYSTICK_DEAD_ZONE = 8000;
 int gLastAccelValue = 0; // Non analog R2
 
-int s; // socket
+can_bus_t *s;
 struct canfd_frame cf;
 char *traffic_log = DEFAULT_CAN_TRAFFIC;
-struct ifreq ifr;
+char can_name[64];
 int door_pos = DEFAULT_DOOR_POS;
 int signal_pos = DEFAULT_SIGNAL_POS;
 int speed_pos = DEFAULT_SPEED_POS;
@@ -166,8 +166,8 @@ char *get_data(char *fname) {
 
 
 void send_pkt(int mtu) {
-  if(write(s, &cf, mtu) != mtu) {
-	perror("write");
+  if(can_bus_send(s, &cf, mtu) < 0) {
+	fprintf(stderr, "%s\n", can_bus_error());
   }
 }
 
@@ -362,13 +362,19 @@ void kk_check(int k) {
 
 // Plays background can traffic
 void play_can_traffic() {
-	char can2can[50];
-	snprintf(can2can, 49, "%s=can0", ifr.ifr_name);
+#ifndef _WIN32
+	char can2can[80];
+	snprintf(can2can, sizeof(can2can), "%s=can0", can_name);
 	if(execlp("canplayer", "canplayer", "-I", traffic_log, "-l", "i", can2can, NULL) == -1) printf("WARNING: Could not execute canplayer. No bg data\n");
+#else
+	printf("WARNING: Background canplayer traffic is not available on Windows\n");
+#endif
 }
 
 void kill_child() {
+#ifndef _WIN32
 	kill(play_id, SIGINT);
+#endif
 }
 
 void redraw_screen() {
@@ -447,9 +453,7 @@ void usage(char *msg) {
 
 int main(int argc, char *argv[]) {
   int opt;
-  struct sockaddr_can addr;
   int running = 1;
-  int enable_canfd = 1;
   int play_traffic = 1;
   struct stat st;
   SDL_Event event;
@@ -490,29 +494,9 @@ int main(int argc, char *argv[]) {
 	usage(msg);
   }
 
-  /* open socket */
-  if ((s = socket(PF_CAN, SOCK_RAW, CAN_RAW)) < 0) {
-       perror("socket");
-       return 1;
-  }
-
-  addr.can_family = AF_CAN;
-
-  strcpy(ifr.ifr_name, argv[optind]);
-  if (ioctl(s, SIOCGIFINDEX, &ifr) < 0) {
-       perror("SIOCGIFINDEX");
-       return 1;
-  }
-  addr.can_ifindex = ifr.ifr_ifindex;
-
-  if (setsockopt(s, SOL_CAN_RAW, CAN_RAW_FD_FRAMES,
-                 &enable_canfd, sizeof(enable_canfd))){
-       printf("error when enabling CAN FD support\n");
-       return 1;
-  }
-
-  if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-       perror("bind");
+  snprintf(can_name, sizeof(can_name), "%s", argv[optind]);
+  if (can_bus_open(&s, can_name) < 0) {
+       fprintf(stderr, "%s\n", can_bus_error());
        return 1;
   }
 
@@ -559,7 +543,13 @@ int main(int argc, char *argv[]) {
 	}
   }
 
+  if(play_traffic && can_bus_is_virtual(s)) {
+	printf("Background CAN traffic is disabled for the built-in virtual CAN bus\n");
+	play_traffic = 0;
+  }
+
   if(play_traffic) {
+#ifndef _WIN32
 	play_id = fork();
 	if((int)play_id == -1) {
 		printf("Error: Couldn't fork bg player\n");
@@ -570,6 +560,9 @@ int main(int argc, char *argv[]) {
 		exit(0);
 	}
 	atexit(kill_child);
+#else
+	printf("WARNING: Background canplayer traffic is not available on Windows\n");
+#endif
   }
 
   // GUI Setup
@@ -803,7 +796,7 @@ int main(int argc, char *argv[]) {
     SDL_Delay(5);
   }
 
-  close(s);
+  can_bus_close(s);
   SDL_DestroyTexture(base_texture);
   SDL_FreeSurface(image);
   SDL_GameControllerClose(gGameController);

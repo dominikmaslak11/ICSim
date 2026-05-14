@@ -23,6 +23,36 @@ With dependencies installed, you may use the [Meson build system](https://mesonb
   meson compile
 ```
 
+Windows
+-------
+Windows does not provide SocketCAN. This port includes a built-in virtual CAN
+bus for Windows that uses local UDP multicast. Use the same bus name in both
+programs, for example `vcan0`, and the programs will exchange CAN frames with
+each other without installing a kernel driver.
+
+Install dependencies with MSYS2 MinGW 64-bit:
+
+```
+  pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-meson mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_image
+```
+
+Build from an MSYS2 MinGW 64-bit shell:
+
+```
+  meson setup builddir
+  meson compile -C builddir
+```
+
+Run the simulator and controls in two terminals:
+
+```
+  builddir/icsim.exe vcan0
+  builddir/controls.exe -X vcan0
+```
+
+The `-X` option disables Linux `canplayer` background traffic, which is not
+available on Windows.
+
 Testing on a virtual CAN interface
 ----------------------------------
 You can run the following commands to setup a virtual can interface
@@ -106,4 +136,3 @@ For the most realistic training you can change the difficulty levels.  Set the d
 ```
 
 This will add additional randomization to the target packets, simulating other data stored in the same arbitration id.
-

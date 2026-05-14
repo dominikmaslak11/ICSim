@@ -6,19 +6,14 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
 #include <time.h>
-#include <getopt.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
-#include <net/if.h>
-#include <linux/can.h>
-#include <linux/can/raw.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 
+#include "getopt_compat.h"
+#include "can_platform.h"
 #include "lib.h"
 
 #ifndef DATA_DIR
@@ -53,7 +48,6 @@
 #define MODEL_BMW_X1_HANDBRAKE_ID 0x1B4  // Not implemented yet
 #define MODEL_BMW_X1_HANDBRAKE_BYTE 5
 
-const int canfd_on = 1;
 int debug = 0;
 int randomize = 0;
 int seed = 0;
@@ -308,17 +302,12 @@ void Usage(char *msg) {
 
 int main(int argc, char *argv[]) {
   int opt;
-  int can;
-  struct ifreq ifr;
-  struct sockaddr_can addr;
+  can_bus_t *can;
   struct canfd_frame frame;
-  struct iovec iov;
-  struct msghdr msg;
-  struct cmsghdr *cmsg;
   struct stat dirstat;
-  char ctrlmsg[CMSG_SPACE(sizeof(struct timeval)) + CMSG_SPACE(sizeof(__u32))];
   int running = 1;
-  int nbytes, maxdlen;
+  int maxdlen;
+  size_t mtu;
   int seed = 0;
   canid_t door_id, signal_id, speed_id;
   SDL_Event event;
@@ -355,35 +344,10 @@ int main(int argc, char *argv[]) {
 	exit(34);
   }
   
-  // Create a new raw CAN socket
-  can = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-  if(can < 0) Usage("Couldn't create raw socket");
-
-  addr.can_family = AF_CAN;
-  memset(&ifr.ifr_name, 0, sizeof(ifr.ifr_name));
-  strncpy(ifr.ifr_name, argv[optind], strlen(argv[optind]));
-  printf("Using CAN interface %s\n", ifr.ifr_name);
-  if (ioctl(can, SIOCGIFINDEX, &ifr) < 0) {
-    perror("SIOCGIFINDEX");
+  printf("Using CAN interface %s\n", argv[optind]);
+  if (can_bus_open(&can, argv[optind]) < 0) {
+    fprintf(stderr, "%s\n", can_bus_error());
     exit(1);
-  }
-  addr.can_ifindex = ifr.ifr_ifindex;
-  // CAN FD Mode
-  setsockopt(can, SOL_CAN_RAW, CAN_RAW_FD_FRAMES, &canfd_on, sizeof(canfd_on));
-
-  iov.iov_base = &frame;
-  iov.iov_len = sizeof(frame);
-  msg.msg_name = &addr;
-  msg.msg_namelen = sizeof(addr);
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-  msg.msg_control = &ctrlmsg;
-  msg.msg_controllen = sizeof(ctrlmsg);
-  msg.msg_flags = 0;
-
-  if (bind(can, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-	perror("bind");
-	return 1;
   }
 
   init_car_state();
@@ -459,29 +423,18 @@ int main(int argc, char *argv[]) {
       SDL_Delay(3);
     }
 
-      nbytes = recvmsg(can, &msg, 0);
-      if (nbytes < 0) {
-        perror("read");
+      if (can_bus_recv(can, &frame, &mtu) < 0) {
+        fprintf(stderr, "%s\n", can_bus_error());
         return 1;
       }  
-      if ((size_t)nbytes == CAN_MTU)
+      if (mtu == CAN_MTU)
         maxdlen = CAN_MAX_DLEN;
-      else if ((size_t)nbytes == CANFD_MTU)
+      else if (mtu == CANFD_MTU)
         maxdlen = CANFD_MAX_DLEN;
       else {
         fprintf(stderr, "read: incomplete CAN frame\n");
         return 1;
       }
-      for (cmsg = CMSG_FIRSTHDR(&msg);
-           cmsg && (cmsg->cmsg_level == SOL_SOCKET);
-           cmsg = CMSG_NXTHDR(&msg,cmsg)) {
-             if (cmsg->cmsg_type == SO_TIMESTAMP) {
-               // struct timeval tv = *(struct timeval *)CMSG_DATA(cmsg);
-             }
-             else if (cmsg->cmsg_type == SO_RXQ_OVFL)
-               //dropcnt[i] = *(__u32 *)CMSG_DATA(cmsg);
-  	     fprintf(stderr, "Dropped packet\n");
-             }
 //      if(debug) fprint_canframe(stdout, &frame, "\n", 0, maxdlen);
       if(frame.can_id == door_id) update_door_status(&frame, maxdlen);
       if(frame.can_id == signal_id) update_signal_status(&frame, maxdlen);
@@ -498,6 +451,7 @@ int main(int argc, char *argv[]) {
   SDL_DestroyWindow(window);
   IMG_Quit();
   SDL_Quit();
+  can_bus_close(can);
 
   return 0;
 }

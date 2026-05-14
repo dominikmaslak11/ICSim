@@ -1,3 +1,5 @@
+#include "can_platform.h"
+
 /*
  * lib.h - library include for command line tools
  *

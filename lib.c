@@ -45,11 +45,11 @@
 #include <string.h>
 #include <stdint.h>
 
-#include <sys/socket.h> /* for sa_family_t */
-#include <linux/can.h>
-#include <linux/can/error.h>
-
 #include "lib.h"
+
+#ifndef _WIN32
+#include <linux/can/error.h>
+#endif
 
 #define CANID_DELIM '#'
 #define DATA_SEPERATOR '.'
@@ -524,7 +524,8 @@ void snprintf_can_error_frame(char *buf, size_t len, struct canfd_frame *cf,
 			      char* sep)
 {
 	canid_t class, mask;
-	int i, n = 0, classes = 0;
+	size_t i;
+	int n = 0, classes = 0;
 	char *defsep = ",";
 
 	if (!(cf->can_id & CAN_ERR_FLAG))
