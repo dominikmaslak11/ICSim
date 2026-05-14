@@ -265,12 +265,12 @@ static void send_gvret_frame_to_can(const unsigned char *data, int len)
 	uint32_t id;
 	unsigned int dlc;
 
-	if (len < 7)
+	if (len < 5)
 		return;
 
 	id = read_le32(data);
-	dlc = data[5];
-	if (dlc > CAN_MAX_DLEN || len < 6 + (int)dlc)
+	dlc = data[4];
+	if (dlc > CAN_MAX_DLEN || len < 5 + (int)dlc)
 		return;
 
 	memset(&frame, 0, sizeof(frame));
@@ -279,7 +279,7 @@ static void send_gvret_frame_to_can(const unsigned char *data, int len)
 	else
 		frame.can_id = id & CAN_SFF_MASK;
 	frame.len = (uint8_t)dlc;
-	memcpy(frame.data, &data[6], dlc);
+	memcpy(frame.data, &data[5], dlc);
 
 	if (can_bus_send(can_bus, &frame, CAN_MTU) < 0)
 		fprintf(stderr, "vcan send failed: %s\n", can_bus_error());
@@ -323,7 +323,7 @@ static void parser_feed(struct gvret_parser *parser, unsigned char c)
 		switch (c) {
 		case 0x00:
 			parser->state = READ_FRAME;
-			parser->needed = 7;
+			parser->needed = 5;  /* ID(4) + DLC(1) */
 			break;
 		case 0x01:
 			gvret_reply_time();
@@ -357,8 +357,8 @@ static void parser_feed(struct gvret_parser *parser, unsigned char c)
 	case READ_FRAME:
 		if (parser->data_len < (int)sizeof(parser->data))
 			parser->data[parser->data_len++] = c;
-		if (parser->data_len == 6)
-			parser->needed = 7 + (parser->data[5] & 0x0f);
+		if (parser->data_len == 5)
+			parser->needed = 5 + (parser->data[4] & 0x0f);
 		if (parser->data_len >= parser->needed) {
 			send_gvret_frame_to_can(parser->data, parser->data_len);
 			parser->state = WAIT_F1;

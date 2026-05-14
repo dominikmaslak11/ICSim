@@ -1,139 +1,230 @@
 Instrument Cluster Simulator for SocketCAN
-------------------------------------------
+==========================================
 
 By: OpenGarages <agent.craig@gmail.com>
 
+Quick Start (Windows)
+---------------------
+
+Open **three** terminals (cmd.exe, PowerShell, or MSYS2) in the `builddir\`
+directory, then run:
+
+```
+Terminal 1:  icsim.exe vcan0
+Terminal 2:  controls.exe -X vcan0
+Terminal 3:  savvycan_bridge.exe vcan0
+```
+
+Now open SavvyCAN, go to **Connection → Open → Add New Connection**:
+
+1. Type: **Network Connection (GVRET)**
+2. Host: **127.0.0.1**
+3. Port: **23**
+4. Bus: **0**
+5. Bit rate: **500000**
+
+Click **Connect**. You will see CAN frames flowing from the simulator in
+SavvyCAN's frame view.
+
+> **Important:** All programs must run from the `builddir\` directory because
+> they depend on DLL files (SDL2.dll, SDL2_image.dll, and others) located there.
+> All three must use the **same bus name** (default: `vcan0`).
+
+Quick Start (Linux)
+-------------------
+
+```
+  sudo modprobe can vcan
+  sudo ip link add dev vcan0 type vcan
+  sudo ip link set up vcan0
+
+  ./icsim vcan0         # Terminal 1
+  ./controls vcan0      # Terminal 2
+```
+
 Compiling
 ---------
+
+### Linux
+
 You will need:
 * SDL2
 * SDL2_Image
 * can-utils
 
-You can get can-utils from github or on Ubuntu you may run the following
-
 ```
-  sudo apt-get install libsdl2-dev libsdl2-image-dev can-utils  
+  sudo apt-get install libsdl2-dev libsdl2-image-dev can-utils
 ```
 
-With dependencies installed, you may use the [Meson build system](https://mesonbuild.com/) to build the project:
+With dependencies installed, use the [Meson build system](https://mesonbuild.com/):
 
 ```
   meson setup builddir && cd builddir
   meson compile
 ```
 
-Windows
--------
-Windows does not provide SocketCAN. This port includes a built-in virtual CAN
-bus for Windows that uses local UDP multicast. Use the same bus name in both
-programs, for example `vcan0`, and the programs will exchange CAN frames with
-each other without installing a kernel driver.
+### Windows
 
-Install dependencies with MSYS2 MinGW 64-bit:
+Install dependencies with **MSYS2 MinGW 64-bit**:
 
 ```
-  pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-meson mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_image
+  pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-meson \
+            mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_image
 ```
 
-Build from an MSYS2 MinGW 64-bit shell:
+Build from an **MSYS2 MinGW 64-bit** shell:
 
 ```
   meson setup builddir
   meson compile -C builddir
 ```
 
-Run the simulator and controls in two terminals:
+On Windows, SocketCAN kernel drivers are not available. This project provides
+a built-in virtual CAN bus using **local UDP multicast** — no kernel driver
+or admin setup is required. All programs that share the same bus name
+(e.g. `vcan0`) automatically exchange CAN frames with each other.
+
+SavvyCAN Integration (Windows)
+------------------------------
+
+The `savvycan_bridge.exe` program bridges the internal virtual CAN bus to
+SavvyCAN via the GVRET binary protocol over TCP.
+
+### Setup
+
+1. Start `icsim.exe vcan0` and `controls.exe -X vcan0` first.
+2. Start `savvycan_bridge.exe vcan0` (add `--stats` for per-second counters).
+3. In SavvyCAN, add a **Network Connection (GVRET)**:
+   - Host: `127.0.0.1`
+   - Port: `23`
+   - Bus: `0`
+   - Bit rate: `500000`
+4. Frames appear immediately in SavvyCAN's frame view.
+
+The bridge exposes **one CAN bus at 500 kbit/s** on the standard GVRET
+TCP port (23). Frames sent from SavvyCAN are injected back into the virtual
+bus — you can use SavvyCAN to send frames that `icsim` will process.
+
+> **Firewall:** The first time you run the bridge, Windows Firewall may
+> prompt you to allow network access. Click **Allow**.
+
+### Testing the bus manually
+
+You can inject frames manually without starting the GUI:
 
 ```
-  builddir/icsim.exe vcan0
-  builddir/controls.exe -X vcan0
+  builddir\cansend.exe vcan0 19B#000001
+  builddir\candump.exe vcan0
 ```
 
-The `-X` option disables Linux `canplayer` background traffic, which is not
-available on Windows.
+Usage
+-----
 
-To inspect the same virtual bus in SavvyCAN, start the GVRET bridge before
-creating the SavvyCAN connection:
-
-```
-  builddir/savvycan_bridge.exe vcan0
-```
-
-In SavvyCAN, add a GVRET TCP/remote connection to `127.0.0.1`. The bridge
-listens on the standard GVRET TCP port 23 and exposes one CAN bus at
-500 kbit/s. Frames sent by SavvyCAN are injected back into the same `vcan0`
-bus used by `icsim.exe` and `controls.exe`.
-
-For a quick manual frame injection test:
+### Default mode
 
 ```
-  builddir/cansend.exe vcan0 19B#000001
+  ./icsim vcan0       # Instrument Cluster window
+  ./controls vcan0    # Control panel window
 ```
 
-The default controls program sends speed frames (`0x244`) continuously and turn
-signal frames (`0x188`) every 500 ms. Door frames (`0x19b`) are event-driven, so
-they appear only after lock/unlock input or manual injection.
+The hard-coded defaults are in sync — the controls app generates CAN packets
+based on your inputs (keyboard or gamepad), and the IC simulator sniffs the
+bus and updates the dashboard display.
+
+Default CAN IDs:
+- Speed:  `0x244`
+- Doors:  `0x19B`
+- Signals: `0x188`
+
+### Controls keyboard mapping
+
+| Key | Action |
+|-----|--------|
+| `↑` | Accelerate |
+| `←` / `→` | Turn signals |
+| `LShift + A/B/X/Y` | Lock individual doors |
+| `RShift + A/B/X/Y` | Unlock individual doors |
+| `A/B/X/Y` (no shift) | Toggle individual doors |
+
+### Windows-specific options
+
+The `-X` flag disables background CAN traffic, which is **required on Windows**
+since `canplayer` is not available:
+
+```
+  controls.exe -X vcan0
+```
+
+On Windows the background traffic thread reads `data/sample-can.log` and
+replays it over the virtual bus instead of forking `canplayer`.
+
+Troubleshooting
+---------------
+
+### "System cannot find DLL" (Windows)
+
+Run the programs from the `builddir\` directory — all required DLLs
+(SDL2.dll, SDL2_image.dll, libwinpthread-1.dll, etc.) are located there.
+
+### Port 23 already in use (Windows)
+
+The GVRET bridge binds to TCP port 23. If another program is using it,
+the bridge will fail to start. Stop the conflicting program or use an
+alternative SavvyCAN connection method.
+
+### SavvyCAN shows no frames
+
+Verify the bridge is listening:
+```
+  netstat -ano | findstr ":23"
+```
+
+Make sure `icsim.exe` and `controls.exe` are running with the **same bus name**
+as `savvycan_bridge.exe` (default: `vcan0`). If the cluster shows no movement,
+try pressing keys in the controls window or send a test frame:
+```
+  cansend.exe vcan0 19B#000001
+```
+
+### read: Bad Address (Linux)
+
+Recompile with updated SDL libraries. Make sure you have the latest SDL2.
+Some users have fixed this by creating symlinks to SDL.h or editing the
+Makefile CFLAGS to point to the correct SDL2 include directory, e.g.
+`/usr/include/x86_64-linux-gnu/SDL2`. Arch Linux may also need `sdl2_gfx`.
+
+### lib.o not linking
+
+If `lib.o` doesn't link, it's probably the wrong architecture. Compile
+can-utils from source and copy the new `lib.o` to the project directory:
+https://github.com/linux-can/can-utils
+
+### canplayer errors (Linux)
+
+Install can-utils: `sudo apt-get install can-utils`
 
 Testing on a virtual CAN interface
 ----------------------------------
-You can run the following commands to setup a virtual can interface
 
 ```
-  sudo modprobe can
-  sudo modprobe vcan
+  sudo modprobe can vcan
   sudo ip link add dev vcan0 type vcan
   sudo ip link set up vcan0
 ```
 
-If you type ifconfig vcan0 you should see a vcan0 interface. A setup_vcan.sh file has also been provided with this
-repo.
+Use `ifconfig vcan0` to verify the interface. A `setup_vcan.sh` script is
+also provided.
 
-Usage
------
-Default operations:
-
-Start the Instrument Cluster (IC) simulator:
-
-```
-  ./icsim vcan0
-```
-
-Then startup the controls
-
-```
-  ./controls vcan0
-```
-
-The hard coded defaults should be in sync and the controls should control the IC.  Ideally use a controller similar to
-an XBox controller to interact with the controls interface.  The controls app will generate corrosponding CAN packets
-based on the buttons you press.  The IC Sim sniffs the CAN and looks for relevant CAN packets that would change the
-display.
-
-Troubleshooting
----------------
-* If you get an error about canplayer then you may not have can-utils properly installed and in your path.
-* If the controller does not seem to be responding make sure the controls window is selected and active
-
-## lib.o not linking
-If lib.o doesn't link it's probably because it's the wrong arch for your platform.  To fix this you will
-want to compile can-utils and copy the newly compiled lib.o to the icsim directory.  You can get can-utils
-from: https://github.com/linux-can/can-utils
-
-## read: Bad address
-When running `./icsim vcan0` you end up getting a `read: Bad Address` message,
-this is typically a result of needing to recompile with updated SDL libraries.
-Make sure you have the recommended latest SDL2 libraries.  Some users have
-reported fixing this problem by creating symlinks to the SDL.h files manually
-or you could edit the Makefile and change the CFLAGS to point to wherever your
-distro installs the SDL.h header, ie: /usr/include/x86_64-linux-gnu/SDL2
-
-There was also a report that on Arch linux needed sdl2_gfx library.
+On Windows, skip this step — the virtual bus is built-in and requires no
+kernel setup.
 
 CAN Hacking Training Usage
 --------------------------
-To *safely* train on CAN hacking you can play back a sample recording included in this repo of generic CAN traffic.  This will
-create something similar to normal CAN "noise".  Then start the IC Sim with the -r (randomize) switch.
+
+To *safely* train on CAN hacking you can play back a sample recording of
+generic CAN traffic (included in `data/sample-can.log`). This creates
+something similar to normal CAN "noise". Then start the IC Sim with the
+`-r` (randomize) switch:
 
 ```
   ./icsim -r vcan0
@@ -141,20 +232,37 @@ create something similar to normal CAN "noise".  Then start the IC Sim with the 
   Seed: 1401717026
 ```
 
-Now copy the seed number and paste it as the -s (seed) option for the controls.
+Now copy the seed number and pass it as the `-s` (seed) option for the controls:
 
 ```
   ./controls -s 1401717026 vcan0
 ```
 
-This will randomize what CAN packets the IC needs and by passing the seed to the controls they will sync.  Randomizing
-changes the arbitration IDs as well as the byte position of the packets used.  This will give you experience in hunting down
-different types of CAN packets on the CAN Bus.
+This randomizes which CAN IDs and byte positions the IC simulator expects.
+Passing the same seed to the controls keeps them in sync. Use SavvyCAN or
+`candump` to hunt down which packets affect the dashboard.
 
-For the most realistic training you can change the difficulty levels.  Set the difficulty to 2 with the controls:
+For the most realistic training, increase the difficulty:
 
 ```
   ./controls -s 1401717026 -l 2 vcan0
 ```
 
-This will add additional randomization to the target packets, simulating other data stored in the same arbitration id.
+Difficulty levels:
+- **0** — Only ID and byte position are randomized
+- **1** — Adds NULL padding to unused bytes
+- **2** — Fills unused bytes with random data (simulates multi-signal CAN frames)
+
+On Windows, add the `-X` flag:
+
+```
+  controls.exe -X -s 1401717026 -l 2 vcan0
+```
+
+To observe the bus during training, add the SavvyCAN bridge:
+
+```
+  savvycan_bridge.exe vcan0
+```
+
+Then connect SavvyCAN to `127.0.0.1:23`.
