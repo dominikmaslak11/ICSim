@@ -53,6 +53,9 @@ int headless = 0;
 int headless_duration = 0;  /* seconds, 0 = run forever */
 can_log_t *can_recorder = NULL;
 can_log_t *can_replayer = NULL;
+int frames_total = 0;
+Uint32 last_can_activity = 0;
+Uint32 replay_base_tick_global = 0;
 char data_file[256];
 SDL_Renderer *renderer = NULL;
 SDL_Texture *base_texture = NULL;
@@ -258,6 +261,39 @@ void update_fuel_bar() {
   SDL_RenderFillRect(renderer, &bar);
 }
 
+/* Draws CAN status indicator and replay progress bar */
+void draw_status_overlay() {
+  Uint32 now = SDL_GetTicks();
+
+  /* CAN activity dot (top-right) */
+  int active = (now - last_can_activity) < 1000;
+  SDL_Rect dot = {SCREEN_WIDTH - 16, 8, 10, 10};
+  SDL_SetRenderDrawColor(renderer, active ? 0 : 80, active ? 220 : 80, 0, 255);
+  SDL_RenderFillRect(renderer, &dot);
+
+  /* Frame counter text — simple LED-like dots pattern (one dot per 25 frames) */
+  int dots = (frames_total / 25) % 20;
+  for (int i = 0; i < dots; i++) {
+	SDL_Rect d = {SCREEN_WIDTH - 30 - i * 6, 12, 4, 4};
+	SDL_SetRenderDrawColor(renderer, 0, 200, 200, 255);
+	SDL_RenderFillRect(renderer, &d);
+  }
+
+  /* Replay progress bar (bottom) */
+  if (can_replayer) {
+	SDL_Rect bg = {0, SCREEN_HEIGHT - 4, SCREEN_WIDTH, 4};
+	SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+	SDL_RenderFillRect(renderer, &bg);
+
+	Uint32 elapsed = now - replay_base_tick_global;
+	int pct = elapsed / 100; /* crude: 100ms = 1% */
+	if (pct > 100) pct = 100;
+	SDL_Rect bar = {0, SCREEN_HEIGHT - 4, (SCREEN_WIDTH * pct) / 100, 4};
+	SDL_SetRenderDrawColor(renderer, 100, 200, 255, 255);
+	SDL_RenderFillRect(renderer, &bar);
+  }
+}
+
 /* Redraws the IC updating everything 
  * Slowest way to go.  Should only use on init
  */
@@ -269,6 +305,7 @@ void redraw_ic() {
   update_rpm_bar();
   update_temp_bar();
   update_fuel_bar();
+  draw_status_overlay();
   SDL_RenderPresent(renderer);
   screen_dirty = 0;
 }
@@ -646,7 +683,7 @@ headless_done:
   redraw_ic();
 
   Uint32 last_present = SDL_GetTicks();
-  Uint32 replay_base_tick = SDL_GetTicks();
+  replay_base_tick_global = SDL_GetTicks();
 
   /* For now we will just operate on one CAN interface */
   while(running) {
@@ -689,6 +726,8 @@ headless_done:
       if(frame.can_id == temp_id) update_temp_status(&frame, maxdlen);
       if(frame.can_id == fuel_id) update_fuel_status(&frame, maxdlen);
       if (can_recorder) can_log_record(can_recorder, &frame);
+      frames_total++;
+      last_can_activity = SDL_GetTicks();
       processed++;
     }
 
@@ -699,7 +738,7 @@ headless_done:
       struct canfd_frame replay_frame;
       while (can_log_replay_next(can_replayer, &replay_frame,
                                  &t_offset, &replay_mtu)) {
-        Uint32 elapsed = SDL_GetTicks() - replay_base_tick;
+        Uint32 elapsed = SDL_GetTicks() - replay_base_tick_global;
         if ((double)elapsed / 1000.0 < t_offset)
           break; /* not yet time for this frame */
         if (can_bus_send(can, &replay_frame, replay_mtu) < 0)

@@ -466,6 +466,7 @@ void usage(char *msg) {
   printf("\t-t\ttraffic file to use for bg CAN traffic\n");
   printf("\t-m\tModel (Ex: -m bmw)\n");
   printf("\t-X\tDisable background CAN traffic.  Cheating if doing RE but needed if playing on a real CANbus\n");
+  printf("\t--demo\tautomatic demo mode (random inputs every 2s)\n");
   printf("\t-d\tdebug mode\n");
   exit(1);
 }
@@ -474,6 +475,7 @@ int main(int argc, char *argv[]) {
   int opt;
   int running = 1;
   int play_traffic = 1;
+  int demo_mode = 0;
   struct stat st;
   SDL_Event event;
 
@@ -503,6 +505,12 @@ int main(int argc, char *argv[]) {
 		usage(NULL);
 		break;
     }
+  }
+
+  /* Parse long options */
+  for (int i = 1; i < argc; i++) {
+	if (strcmp(argv[i], "--demo") == 0)
+		demo_mode = 1;
   }
 
   if (optind >= argc) usage("You must specify at least one can device");
@@ -859,6 +867,30 @@ int main(int argc, char *argv[]) {
     currentTime = SDL_GetTicks();
     checkAccel();
     checkTurn();
+
+    /* Demo mode: random inputs every 2 seconds */
+    if (demo_mode) {
+	static Uint32 last_demo = 0;
+	if (currentTime - last_demo > 2000) {
+		last_demo = currentTime;
+		int action = rand() % 7;
+		switch (action) {
+		case 0: throttle = (rand() % 2) ? 1 : -1; break;
+		case 1: throttle = 0; break;
+		case 2: turning = (rand() % 3) - 1; break;
+		case 3: engine_rpm = 800 + (rand() % 6000);
+			if (engine_rpm > 7000) engine_rpm = 7000;
+			send_rpm(); break;
+		case 4: coolant_temp = 60 + (rand() % 50);
+			if (coolant_temp > 120) coolant_temp = 120;
+			send_temp(); break;
+		case 5: toggle_door(ICSIM_DOOR1 << (rand() % 4)); break;
+		case 6: signal_state ^= (rand() % 2) ? ICSIM_TURN_LEFT : ICSIM_TURN_RIGHT;
+			send_turn_signal(); break;
+		}
+	}
+    }
+
     SDL_Delay(5);
   }
 
