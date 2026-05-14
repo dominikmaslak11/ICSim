@@ -122,7 +122,7 @@ int door_pos = DEFAULT_DOOR_POS;
 int signal_pos = DEFAULT_SIGNAL_POS;
 int speed_pos = DEFAULT_SPEED_POS;
 int door_len = DEFAULT_DOOR_POS + 1;
-int signal_len = DEFAULT_DOOR_POS + 1;
+int signal_len = DEFAULT_SIGNAL_POS + 1;
 int speed_len = DEFAULT_SPEED_POS + 2;
 int difficulty = DEFAULT_DIFFICULTY;
 char *model = NULL;
@@ -515,7 +515,7 @@ int main(int argc, char *argv[]) {
         printf("Seed: %d\n", seed);
 	door_len = door_pos + 1;
 	signal_len = signal_pos + 1;
-	speed_len = speed_len + 2;
+	speed_len = speed_pos + 2;
   } else if (model) {
 	if (!strncmp(model, "bmw", 3)) {
 		speed_id = MODEL_BMW_X1_SPEED_ID;

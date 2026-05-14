@@ -229,7 +229,7 @@ void redraw_ic() {
 /* Parses CAN fram and updates current_speed */
 void update_speed_status(struct canfd_frame *cf, int maxdlen) {
   int len = (cf->len > maxdlen) ? maxdlen : cf->len;
-  if(len < speed_pos + 1) return;
+  if(len <= speed_pos + 1) return;
   if (model) {
 	if (!strncmp(model, "bmw", 3)) {
 		current_speed = (((cf->data[speed_pos + 1] - 208) * 256) + cf->data[speed_pos]) / 16;
@@ -247,7 +247,7 @@ void update_speed_status(struct canfd_frame *cf, int maxdlen) {
 /* Parses CAN frame and updates turn signal status */
 void update_signal_status(struct canfd_frame *cf, int maxdlen) {
   int len = (cf->len > maxdlen) ? maxdlen : cf->len;
-  if(len < signal_pos) return;
+  if(len <= signal_pos) return;
   if(cf->data[signal_pos] & CAN_LEFT_SIGNAL) {
     turn_status[0] = ON;
   } else {
@@ -265,7 +265,7 @@ void update_signal_status(struct canfd_frame *cf, int maxdlen) {
 /* Parses CAN frame and updates door status */
 void update_door_status(struct canfd_frame *cf, int maxdlen) {
   int len = (cf->len > maxdlen) ? maxdlen : cf->len;
-  if(len < door_pos) return;
+  if(len <= door_pos) return;
   if(cf->data[door_pos] & CAN_DOOR1_LOCK) {
 	door_status[0] = DOOR_LOCKED;
   } else {
@@ -366,9 +366,17 @@ int main(int argc, char *argv[]) {
 	signal_pos = rand() % 9;
 	speed_pos = rand() % 8;
 	printf("Seed: %d\n", seed);
-	FILE *fdseed = fopen("/tmp/icsim_seed.txt", "w");
-	fprintf(fdseed, "%d\n", seed);
-	fclose(fdseed);
+	const char *seed_path =
+#ifdef _WIN32
+		"icsim_seed.txt";
+#else
+		"/tmp/icsim_seed.txt";
+#endif
+	FILE *fdseed = fopen(seed_path, "w");
+	if (fdseed) {
+		fprintf(fdseed, "%d\n", seed);
+		fclose(fdseed);
+	}
   } else if (model) {
 	if (!strncmp(model, "bmw", 3)) {
 		speed_id = MODEL_BMW_X1_SPEED_ID;
