@@ -41,3 +41,22 @@ executable('websocket_bridge',
     c_args: ['-DMG_ENABLE_SOCKET=1', '-DMG_ENABLE_CUSTOM_MILLIS=0'])
 executable('cansend', ['cansend.c', 'can_bus.c', 'lib.c'], dependencies: socket_deps)
 executable('candump', ['candump.c', 'can_bus.c', 'lib.c'], dependencies: socket_deps)
+
+# ---- tests ----
+test_sources = ['can_bus.c', 'lib.c', 'config.c', 'can_log.c', 'toml.c']
+test_deps = socket_deps
+
+test_can_parse = executable('test_can_parse',
+    ['tests/test_can_parse.c', test_sources],
+    dependencies: test_deps)
+test('CAN frame parser', test_can_parse)
+
+test_config = executable('test_config',
+    ['tests/test_config.c', test_sources],
+    dependencies: test_deps)
+test('TOML config loader', test_config)
+
+test_asc = executable('test_asc',
+    ['tests/test_asc.c', test_sources],
+    dependencies: test_deps)
+test('ASC format', test_asc)
