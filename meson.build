@@ -20,6 +20,7 @@ endif
 
 common_sources = [
     'can_bus.c',
+    'can_log.c',
     'config.c',
     'getopt_compat.c',
     'lib.c',

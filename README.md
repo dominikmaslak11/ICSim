@@ -112,6 +112,25 @@ Open `http://127.0.0.1:8080` — you'll see a real-time table of CAN frames
 and a form to inject frames back into the bus. Works alongside the GVRET
 bridge on port 23.
 
+### Recording and replay (ASC format)
+
+Record all CAN traffic to a Vector ASC file:
+
+```
+  icsim.exe -R session.asc vcan0
+```
+
+The ASC file can be opened in Wireshark, SavvyCAN, or CANalyzer.
+
+Replay a recorded session with original timing:
+
+```
+  icsim.exe -P session.asc vcan0
+```
+
+Recording and replay can be combined — record while replaying captures
+the full bus traffic including injected frames.
+
 ### Testing the bus manually
 
 You can inject frames manually without starting the GUI:

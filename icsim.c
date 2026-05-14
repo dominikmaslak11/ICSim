@@ -14,6 +14,7 @@
 
 #include "getopt_compat.h"
 #include "can_platform.h"
+#include "can_log.h"
 #include "config.h"
 #include "lib.h"
 
@@ -40,6 +41,10 @@ long current_speed = 0;
 int door_status[4];
 int turn_status[2];
 char *model = NULL;   /* model name for BMW-specific speed formula */
+char *record_path = NULL;
+char *replay_path = NULL;
+can_log_t *can_recorder = NULL;
+can_log_t *can_replayer = NULL;
 char data_file[256];
 SDL_Renderer *renderer = NULL;
 SDL_Texture *base_texture = NULL;
@@ -282,6 +287,8 @@ void Usage(char *msg) {
   printf("\t-s\tseed value\n");
   printf("\t-d\tdebug mode\n");
   printf("\t-m\tmodel FILE or name  (Ex: -m bmw, -m models/default.toml)\n");
+  printf("\t-R FILE\trecord CAN frames to ASC file\n");
+  printf("\t-P FILE\treplay CAN frames from ASC file\n");
   exit(1);
 }
 
@@ -297,7 +304,7 @@ int main(int argc, char *argv[]) {
   canid_t door_id, signal_id, speed_id;
   SDL_Event event;
 
-  while ((opt = getopt(argc, argv, "rs:dm:h?")) != -1) {
+  while ((opt = getopt(argc, argv, "rs:dm:h?R:P:")) != -1) {
     switch(opt) {
 	case 'r':
 		randomize = 1;
@@ -310,6 +317,12 @@ int main(int argc, char *argv[]) {
 		break;
 	case 'm':
 		model = optarg;
+		break;
+	case 'R':
+		record_path = optarg;
+		break;
+	case 'P':
+		replay_path = optarg;
 		break;
 	case 'h':
 	case '?':
@@ -337,6 +350,22 @@ int main(int argc, char *argv[]) {
   if (can_bus_set_nonblocking(can, 1) < 0) {
     fprintf(stderr, "%s\n", can_bus_error());
     exit(1);
+  }
+
+  /* Recording / replay */
+  if (record_path) {
+	can_recorder = can_log_open_record(record_path);
+	if (!can_recorder)
+		fprintf(stderr, "WARNING: recording disabled\n");
+	else
+		printf("Recording CAN frames to: %s\n", record_path);
+  }
+  if (replay_path) {
+	can_replayer = can_log_open_replay(replay_path);
+	if (!can_replayer)
+		fprintf(stderr, "WARNING: replay disabled\n");
+	else
+		printf("Replaying CAN frames from: %s\n", replay_path);
   }
 
   init_car_state();
@@ -415,6 +444,7 @@ int main(int argc, char *argv[]) {
   redraw_ic();
 
   Uint32 last_present = SDL_GetTicks();
+  Uint32 replay_base_tick = SDL_GetTicks();
 
   /* For now we will just operate on one CAN interface */
   while(running) {
@@ -453,7 +483,24 @@ int main(int argc, char *argv[]) {
       if(frame.can_id == door_id) update_door_status(&frame, maxdlen);
       if(frame.can_id == signal_id) update_signal_status(&frame, maxdlen);
       if(frame.can_id == speed_id) update_speed_status(&frame, maxdlen);
+      if (can_recorder) can_log_record(can_recorder, &frame);
       processed++;
+    }
+
+    /* Replay: inject frames whose timestamp has elapsed */
+    if (can_replayer) {
+      double t_offset;
+      size_t replay_mtu;
+      struct canfd_frame replay_frame;
+      while (can_log_replay_next(can_replayer, &replay_frame,
+                                 &t_offset, &replay_mtu)) {
+        Uint32 elapsed = SDL_GetTicks() - replay_base_tick;
+        if ((double)elapsed / 1000.0 < t_offset)
+          break; /* not yet time for this frame */
+        if (can_bus_send(can, &replay_frame, replay_mtu) < 0)
+          fprintf(stderr, "replay send: %s\n", can_bus_error());
+        if (can_recorder) can_log_record(can_recorder, &replay_frame);
+      }
     }
 
     if (screen_dirty && SDL_GetTicks() - last_present >= 16) {
@@ -476,6 +523,9 @@ int main(int argc, char *argv[]) {
   IMG_Quit();
   SDL_Quit();
   can_bus_close(can);
+
+  if (can_recorder) can_log_close(can_recorder);
+  if (can_replayer) can_log_close(can_replayer);
 
   return 0;
 }
