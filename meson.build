@@ -29,3 +29,8 @@ subdir('data')
 
 executable('icsim', ['icsim.c', common_sources], dependencies: deps + socket_deps)
 executable('controls', ['controls.c', common_sources], dependencies: deps + socket_deps)
+if host_machine.system() == 'windows'
+    executable('savvycan_bridge', ['savvycan_bridge.c', 'can_bus.c'], dependencies: socket_deps)
+endif
+executable('cansend', ['cansend.c', 'can_bus.c', 'lib.c'], dependencies: socket_deps)
+executable('candump', ['candump.c', 'can_bus.c', 'lib.c'], dependencies: socket_deps)

@@ -64,6 +64,7 @@ SDL_Texture *base_texture = NULL;
 SDL_Texture *needle_tex = NULL;
 SDL_Texture *sprite_tex = NULL;
 SDL_Rect speed_rect;
+int screen_dirty = 0;
 
 // Simple map function
 long map(long x, long in_min, long in_max, long out_min, long out_max)
@@ -224,6 +225,7 @@ void redraw_ic() {
   update_doors();
   update_turn_signals();
   SDL_RenderPresent(renderer);
+  screen_dirty = 0;
 }
 
 /* Parses CAN fram and updates current_speed */
@@ -241,7 +243,7 @@ void update_speed_status(struct canfd_frame *cf, int maxdlen) {
 	  current_speed = speed * 0.6213751; // mph
   }
   update_speed();
-  SDL_RenderPresent(renderer);
+  screen_dirty = 1;
 }
 
 /* Parses CAN frame and updates turn signal status */
@@ -259,7 +261,7 @@ void update_signal_status(struct canfd_frame *cf, int maxdlen) {
     turn_status[1] = OFF;
   }
   update_turn_signals();
-  SDL_RenderPresent(renderer);
+  screen_dirty = 1;
 }
 
 /* Parses CAN frame and updates door status */
@@ -288,6 +290,7 @@ void update_door_status(struct canfd_frame *cf, int maxdlen) {
   }
   update_doors();
   SDL_RenderPresent(renderer);
+  screen_dirty = 0;
 }
 
 void Usage(char *msg) {
@@ -349,6 +352,10 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "%s\n", can_bus_error());
     exit(1);
   }
+  if (can_bus_set_nonblocking(can, 1) < 0) {
+    fprintf(stderr, "%s\n", can_bus_error());
+    exit(1);
+  }
 
   init_car_state();
 
@@ -397,7 +404,7 @@ int main(int argc, char *argv[]) {
   if(window == NULL) {
 	printf("Window could not be shown\n");
   }
-  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
   SDL_Surface *image = IMG_Load(get_data("ic.png"));
   SDL_Surface *needle = IMG_Load(get_data("needle.png"));
   SDL_Surface *sprites = IMG_Load(get_data("spritesheet.png"));
@@ -412,6 +419,8 @@ int main(int argc, char *argv[]) {
 
   // Draw the IC
   redraw_ic();
+
+  Uint32 last_present = SDL_GetTicks();
 
   /* For now we will just operate on one CAN interface */
   while(running) {
@@ -428,13 +437,16 @@ int main(int argc, char *argv[]) {
 		break;
 	    }
    	}
-      SDL_Delay(3);
     }
 
+    int processed = 0;
+    while (processed < 512) {
       if (can_bus_recv(can, &frame, &mtu) < 0) {
+        if (can_bus_error_is_would_block())
+          break;
         fprintf(stderr, "%s\n", can_bus_error());
         return 1;
-      }  
+      }
       if (mtu == CAN_MTU)
         maxdlen = CAN_MAX_DLEN;
       else if (mtu == CANFD_MTU)
@@ -447,6 +459,16 @@ int main(int argc, char *argv[]) {
       if(frame.can_id == door_id) update_door_status(&frame, maxdlen);
       if(frame.can_id == signal_id) update_signal_status(&frame, maxdlen);
       if(frame.can_id == speed_id) update_speed_status(&frame, maxdlen);
+      processed++;
+    }
+
+    if (screen_dirty && SDL_GetTicks() - last_present >= 16) {
+      SDL_RenderPresent(renderer);
+      screen_dirty = 0;
+      last_present = SDL_GetTicks();
+    }
+
+    SDL_Delay(processed ? 0 : 1);
   }
 
   SDL_DestroyTexture(base_texture);

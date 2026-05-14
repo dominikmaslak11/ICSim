@@ -19,6 +19,7 @@
 
 #include "getopt_compat.h"
 #include "can_platform.h"
+#include "lib.h"
 
 #ifndef DATA_DIR
 #define DATA_DIR "./data/"
@@ -151,6 +152,7 @@ SDL_Haptic *gHaptic = NULL;
 SDL_Renderer *renderer = NULL;
 SDL_Texture *base_texture = NULL;
 int gControllerType = USB_CONTROLLER;
+volatile int traffic_running = 1;
 
 void kk_check(int);
 
@@ -202,6 +204,14 @@ void send_unlock(char door) {
 	send_pkt(CAN_MTU);
 }
 
+void toggle_door(char door) {
+	if (door_state & door) {
+		send_unlock(door);
+	} else {
+		send_lock(door);
+	}
+}
+
 void send_speed() {
 	if (model) {
 		if (!strncmp(model, "bmw", 3)) {
@@ -250,8 +260,8 @@ void send_turn_signal() {
 // Checks throttle to see if we should accelerate or decelerate the vehicle
 void checkAccel() {
 	float rate = MAX_SPEED / (ACCEL_RATE * 100);
-	// Updated every 10 ms
-	if(currentTime > lastAccel + 10) {
+	// Updated around 30 Hz to keep the UI responsive while preserving smooth motion.
+	if(currentTime > lastAccel + 33) {
 		if(throttle < 0) {
 			current_speed -= rate;
 			if(current_speed < 1) current_speed = 0;
@@ -369,6 +379,40 @@ void play_can_traffic() {
 #else
 	printf("WARNING: Background canplayer traffic is not available on Windows\n");
 #endif
+}
+
+int play_can_traffic_thread(void *unused) {
+  (void)unused;
+
+  while(traffic_running) {
+	FILE *traffic = fopen(traffic_log, "r");
+	char line[256];
+
+	if(!traffic) {
+		fprintf(stderr, "WARNING: Could not open CAN traffic file: %s\n", traffic_log);
+		return 1;
+	}
+
+	while(traffic_running && fgets(line, sizeof(line), traffic)) {
+		char *hash = strchr(line, '#');
+		char *frame_text;
+		struct canfd_frame traffic_frame;
+		int mtu;
+
+		if(!hash) continue;
+		frame_text = hash;
+		while(frame_text > line && frame_text[-1] != ' ' && frame_text[-1] != '\t')
+			frame_text--;
+
+		mtu = parse_canframe(frame_text, &traffic_frame);
+		if(mtu)
+			can_bus_send(s, &traffic_frame, (size_t)mtu);
+		SDL_Delay(2);
+	}
+	fclose(traffic);
+  }
+
+  return 0;
 }
 
 void kill_child() {
@@ -543,25 +587,24 @@ int main(int argc, char *argv[]) {
 	}
   }
 
-  if(play_traffic && can_bus_is_virtual(s)) {
-	printf("Background CAN traffic is disabled for the built-in virtual CAN bus\n");
-	play_traffic = 0;
-  }
-
   if(play_traffic) {
 #ifndef _WIN32
-	play_id = fork();
-	if((int)play_id == -1) {
-		printf("Error: Couldn't fork bg player\n");
-		exit(-1);
-	} else if (play_id == 0) {
-		play_can_traffic();
-		// Shouldn't return
-		exit(0);
+	if(can_bus_is_virtual(s)) {
+		SDL_CreateThread(play_can_traffic_thread, "can-traffic", NULL);
+	} else {
+		play_id = fork();
+		if((int)play_id == -1) {
+			printf("Error: Couldn't fork bg player\n");
+			exit(-1);
+		} else if (play_id == 0) {
+			play_can_traffic();
+			// Shouldn't return
+			exit(0);
+		}
+		atexit(kill_child);
 	}
-	atexit(kill_child);
 #else
-	printf("WARNING: Background canplayer traffic is not available on Windows\n");
+	SDL_CreateThread(play_can_traffic_thread, "can-traffic", NULL);
 #endif
   }
 
@@ -632,17 +675,19 @@ int main(int argc, char *argv[]) {
 			break;
 		    case SDLK_LSHIFT:
 			lock_enabled = 1;
-			if(unlock_enabled) send_lock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
+			if(!event.key.repeat) send_lock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
 			break;
 		    case SDLK_RSHIFT:
 			unlock_enabled = 1;
-			if(lock_enabled) send_unlock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
+			if(!event.key.repeat) send_unlock(CAN_DOOR1_LOCK | CAN_DOOR2_LOCK | CAN_DOOR3_LOCK | CAN_DOOR4_LOCK);
 			break;
 		    case SDLK_a:
 			if(lock_enabled) {
 				send_lock(CAN_DOOR1_LOCK);
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR1_LOCK);
+			} else if(!event.key.repeat) {
+				toggle_door(CAN_DOOR1_LOCK);
 			}
 			break;
 		    case SDLK_b:
@@ -650,6 +695,8 @@ int main(int argc, char *argv[]) {
 				send_lock(CAN_DOOR2_LOCK);
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR2_LOCK);
+			} else if(!event.key.repeat) {
+				toggle_door(CAN_DOOR2_LOCK);
 			}
 			break;
 		    case SDLK_x:
@@ -657,6 +704,8 @@ int main(int argc, char *argv[]) {
 				send_lock(CAN_DOOR3_LOCK);
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR3_LOCK);
+			} else if(!event.key.repeat) {
+				toggle_door(CAN_DOOR3_LOCK);
 			}
 			break;
 		    case SDLK_y:
@@ -664,6 +713,8 @@ int main(int argc, char *argv[]) {
 				send_lock(CAN_DOOR4_LOCK);
 			} else if(unlock_enabled) {
 				send_unlock(CAN_DOOR4_LOCK);
+			} else if(!event.key.repeat) {
+				toggle_door(CAN_DOOR4_LOCK);
 			}
 			break;
 		}
@@ -796,6 +847,8 @@ int main(int argc, char *argv[]) {
     SDL_Delay(5);
   }
 
+  traffic_running = 0;
+  SDL_Delay(10);
   can_bus_close(s);
   SDL_DestroyTexture(base_texture);
   SDL_FreeSurface(image);
@@ -804,4 +857,5 @@ int main(int argc, char *argv[]) {
   SDL_DestroyWindow(window);
   SDL_Quit();
 
+  return 0;
 }

@@ -17,6 +17,7 @@ struct can_bus {
 
 static char last_error[256];
 static int wsa_started = 0;
+static int last_would_block = 0;
 
 static unsigned short vcan_port(const char *name)
 {
@@ -48,7 +49,9 @@ static void vcan_group(const char *name, struct in_addr *group)
 
 static void set_last_wsa_error(const char *context)
 {
-	snprintf(last_error, sizeof(last_error), "%s: WSA error %d", context, WSAGetLastError());
+	int err = WSAGetLastError();
+	last_would_block = err == WSAEWOULDBLOCK;
+	snprintf(last_error, sizeof(last_error), "%s: WSA error %d", context, err);
 }
 
 int can_bus_open(can_bus_t **bus, const char *name)
@@ -57,6 +60,7 @@ int can_bus_open(can_bus_t **bus, const char *name)
 	struct can_bus *opened;
 	struct sockaddr_in bind_addr;
 	struct ip_mreq mreq;
+	struct in_addr loopback_addr;
 	int reuse = 1;
 	int loopback = 1;
 	int ttl = 1;
@@ -82,7 +86,13 @@ int can_bus_open(can_bus_t **bus, const char *name)
 		return -1;
 	}
 
+	loopback_addr.s_addr = htonl(INADDR_LOOPBACK);
 	setsockopt(opened->sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse));
+	{
+		int buffer_size = 1024 * 1024;
+		setsockopt(opened->sock, SOL_SOCKET, SO_RCVBUF,
+		           (const char *)&buffer_size, sizeof(buffer_size));
+	}
 
 	memset(&bind_addr, 0, sizeof(bind_addr));
 	bind_addr.sin_family = AF_INET;
@@ -103,7 +113,7 @@ int can_bus_open(can_bus_t **bus, const char *name)
 
 	memset(&mreq, 0, sizeof(mreq));
 	mreq.imr_multiaddr = opened->addr.sin_addr;
-	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+	mreq.imr_interface = loopback_addr;
 	if (setsockopt(opened->sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 	               (const char *)&mreq, sizeof(mreq)) == SOCKET_ERROR) {
 		set_last_wsa_error("IP_ADD_MEMBERSHIP");
@@ -111,6 +121,8 @@ int can_bus_open(can_bus_t **bus, const char *name)
 		free(opened);
 		return -1;
 	}
+	setsockopt(opened->sock, IPPROTO_IP, IP_MULTICAST_IF,
+	           (const char *)&loopback_addr, sizeof(loopback_addr));
 	setsockopt(opened->sock, IPPROTO_IP, IP_MULTICAST_LOOP, (const char *)&loopback, sizeof(loopback));
 	setsockopt(opened->sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char *)&ttl, sizeof(ttl));
 
@@ -142,6 +154,22 @@ int can_bus_recv(can_bus_t *bus, struct canfd_frame *frame, size_t *mtu)
 	return 0;
 }
 
+int can_bus_set_nonblocking(can_bus_t *bus, int nonblocking)
+{
+	u_long mode = nonblocking ? 1 : 0;
+
+	if (ioctlsocket(bus->sock, FIONBIO, &mode) == SOCKET_ERROR) {
+		set_last_wsa_error("ioctlsocket FIONBIO");
+		return -1;
+	}
+	return 0;
+}
+
+int can_bus_error_is_would_block(void)
+{
+	return last_would_block;
+}
+
 void can_bus_close(can_bus_t *bus)
 {
 	if (!bus)
@@ -163,6 +191,7 @@ int can_bus_is_virtual(const can_bus_t *bus)
 
 #else
 #include <net/if.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -174,9 +203,11 @@ struct can_bus {
 
 static char last_error[256];
 static const int canfd_on = 1;
+static int last_would_block = 0;
 
 static void set_last_errno(const char *context)
 {
+	last_would_block = errno == EAGAIN || errno == EWOULDBLOCK;
 	snprintf(last_error, sizeof(last_error), "%s: %s", context, strerror(errno));
 }
 
@@ -243,6 +274,30 @@ int can_bus_recv(can_bus_t *bus, struct canfd_frame *frame, size_t *mtu)
 
 	*mtu = (size_t)nbytes;
 	return 0;
+}
+
+int can_bus_set_nonblocking(can_bus_t *bus, int nonblocking)
+{
+	int flags = fcntl(bus->fd, F_GETFL, 0);
+
+	if (flags < 0) {
+		set_last_errno("fcntl F_GETFL");
+		return -1;
+	}
+	if (nonblocking)
+		flags |= O_NONBLOCK;
+	else
+		flags &= ~O_NONBLOCK;
+	if (fcntl(bus->fd, F_SETFL, flags) < 0) {
+		set_last_errno("fcntl F_SETFL");
+		return -1;
+	}
+	return 0;
+}
+
+int can_bus_error_is_would_block(void)
+{
+	return last_would_block;
 }
 
 void can_bus_close(can_bus_t *bus)

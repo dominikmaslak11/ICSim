@@ -53,6 +53,28 @@ Run the simulator and controls in two terminals:
 The `-X` option disables Linux `canplayer` background traffic, which is not
 available on Windows.
 
+To inspect the same virtual bus in SavvyCAN, start the GVRET bridge before
+creating the SavvyCAN connection:
+
+```
+  builddir/savvycan_bridge.exe vcan0
+```
+
+In SavvyCAN, add a GVRET TCP/remote connection to `127.0.0.1`. The bridge
+listens on the standard GVRET TCP port 23 and exposes one CAN bus at
+500 kbit/s. Frames sent by SavvyCAN are injected back into the same `vcan0`
+bus used by `icsim.exe` and `controls.exe`.
+
+For a quick manual frame injection test:
+
+```
+  builddir/cansend.exe vcan0 19B#000001
+```
+
+The default controls program sends speed frames (`0x244`) continuously and turn
+signal frames (`0x188`) every 500 ms. Door frames (`0x19b`) are event-driven, so
+they appear only after lock/unlock input or manual injection.
+
 Testing on a virtual CAN interface
 ----------------------------------
 You can run the following commands to setup a virtual can interface
