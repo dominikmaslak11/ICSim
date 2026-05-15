@@ -26,6 +26,7 @@
 #include <cstring>
 #include <ctime>
 #include <sys/stat.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -96,9 +97,24 @@ static canid_t g_rpm_id,  g_temp_id,   g_fuel_id;
 static bool controls_mode = false;
 static bool show_debug = false;
 static bool show_help = false;
+static bool show_can_monitor = true;
 static bool debug_can = false;
 static bool fullscreen = false;
 static float replay_speed = 1.0f;
+
+#define CAN_MONITOR_MAX 96
+struct can_monitor_entry {
+	canid_t id;
+	uint8_t len;
+	uint8_t data[CAN_MAX_DLEN];
+	unsigned long count;
+	Uint32 first_tick;
+	Uint32 last_tick;
+	int active;
+};
+
+static can_monitor_entry can_monitor[CAN_MONITOR_MAX];
+static int can_monitor_entries = 0;
 
 /* model switching */
 static std::vector<std::string> model_list;
@@ -167,6 +183,51 @@ static void update_door_status(struct canfd_frame *cf, int maxdlen) {
 	door_status[1] = (d & ICSIM_DOOR2) ? DOOR_LOCKED : DOOR_UNLOCKED;
 	door_status[2] = (d & ICSIM_DOOR3) ? DOOR_LOCKED : DOOR_UNLOCKED;
 	door_status[3] = (d & ICSIM_DOOR4) ? DOOR_LOCKED : DOOR_UNLOCKED;
+}
+
+/* ---------- CAN monitor ---------- */
+static int can_monitor_find(canid_t id) {
+	for (int i = 0; i < can_monitor_entries; i++) {
+		if (can_monitor[i].active && can_monitor[i].id == id)
+			return i;
+	}
+	return -1;
+}
+
+static int can_monitor_oldest(void) {
+	int oldest = 0;
+	for (int i = 1; i < can_monitor_entries; i++) {
+		if (can_monitor[i].last_tick < can_monitor[oldest].last_tick)
+			oldest = i;
+	}
+	return oldest;
+}
+
+static void can_monitor_observe(const struct canfd_frame *f, size_t mtu) {
+	Uint32 now = SDL_GetTicks();
+	int idx = can_monitor_find(f->can_id);
+	uint8_t len = f->len;
+
+	if (mtu < CAN_MTU)
+		return;
+	if (len > CAN_MAX_DLEN)
+		len = CAN_MAX_DLEN;
+
+	if (idx < 0) {
+		if (can_monitor_entries < CAN_MONITOR_MAX)
+			idx = can_monitor_entries++;
+		else
+			idx = can_monitor_oldest();
+		memset(&can_monitor[idx], 0, sizeof(can_monitor[idx]));
+		can_monitor[idx].id = f->can_id;
+		can_monitor[idx].first_tick = now;
+		can_monitor[idx].active = 1;
+	}
+
+	can_monitor[idx].len = len;
+	memcpy(can_monitor[idx].data, f->data, len);
+	can_monitor[idx].count++;
+	can_monitor[idx].last_tick = now;
 }
 
 /* ---------- controls CAN send helpers ---------- */
@@ -545,6 +606,85 @@ static void draw_door_dot(float x, float y, int door_idx) {
 	dl->AddText(ImVec2(x - ns.x * 0.5f, y + 10), COL_WHITE, buf);
 }
 
+static void render_can_monitor_panel(float W, float H) {
+	if (!show_can_monitor)
+		return;
+
+	Uint32 now = SDL_GetTicks();
+	float panel_w = W * 0.38f;
+	float panel_h = H * 0.30f;
+	float panel_x = W - panel_w - 8.0f;
+	float panel_y = H - panel_h - 8.0f;
+	std::vector<int> rows;
+
+	for (int i = 0; i < can_monitor_entries; i++) {
+		if (can_monitor[i].active)
+			rows.push_back(i);
+	}
+	std::sort(rows.begin(), rows.end(), [](int a, int b) {
+		return can_monitor[a].last_tick > can_monitor[b].last_tick;
+	});
+
+	ImGui::SetNextWindowPos(ImVec2(panel_x, panel_y), ImGuiCond_Always);
+	ImGui::SetNextWindowSize(ImVec2(panel_w, panel_h), ImGuiCond_Always);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
+	ImGui::Begin("CAN Monitor", &show_can_monitor,
+		ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+		ImGuiWindowFlags_NoSavedSettings);
+
+	ImGui::Text("IDs: %d  Frames: %d", (int)rows.size(), frames_total);
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Clear")) {
+		memset(can_monitor, 0, sizeof(can_monitor));
+		can_monitor_entries = 0;
+		rows.clear();
+	}
+	ImGui::Separator();
+
+	if (ImGui::BeginTable("canmon", 5,
+		ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
+		ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
+		ImVec2(0, 0))) {
+		ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 46.0f);
+		ImGui::TableSetupColumn("Hz", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+		ImGui::TableSetupColumn("Cnt", ImGuiTableColumnFlags_WidthFixed, 46.0f);
+		ImGui::TableSetupColumn("Age", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+		ImGui::TableSetupColumn("Data");
+		ImGui::TableHeadersRow();
+
+		for (int row : rows) {
+			const can_monitor_entry &e = can_monitor[row];
+			char payload[3 * CAN_MAX_DLEN + 1];
+			int off = 0;
+			float age = (now - e.last_tick) / 1000.0f;
+			float window_s = (e.last_tick - e.first_tick) / 1000.0f;
+			float hz = (window_s > 0.1f) ? (float)e.count / window_s : 0.0f;
+
+			for (int i = 0; i < e.len && off < (int)sizeof(payload) - 3; i++)
+				off += snprintf(payload + off, sizeof(payload) - off,
+					"%02X%s", e.data[i], (i + 1 == e.len) ? "" : " ");
+			payload[off] = '\0';
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::Text("0x%03X", e.id & CAN_EFF_MASK);
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%.1f", hz);
+			ImGui::TableSetColumnIndex(2);
+			ImGui::Text("%lu", e.count);
+			ImGui::TableSetColumnIndex(3);
+			ImGui::Text("%.1f", age);
+			ImGui::TableSetColumnIndex(4);
+			ImGui::TextUnformatted(payload);
+		}
+		ImGui::EndTable();
+	}
+
+	ImGui::End();
+	ImGui::PopStyleVar(2);
+}
+
 /* ===== Dashboard render ===== */
 static void render_dashboard() {
 	ImGuiIO &io = ImGui::GetIO();
@@ -679,6 +819,8 @@ static void render_dashboard() {
 
 	ImGui::PopStyleVar(3);
 	ImGui::End();
+
+	render_can_monitor_panel(W, H);
 }
 
 /* ===== Controls panel render ===== */
@@ -848,6 +990,7 @@ static void render_help_overlay() {
 		ImGui::BulletText("icsim_imgui.exe vcan0");
 	} else {
 		ImGui::BulletText("D          Toggle debug overlay");
+		ImGui::BulletText("M          Toggle CAN monitor");
 		ImGui::BulletText("F11 / Alt+Enter  Fullscreen");
 		ImGui::BulletText("? / F1 / Ctrl+H   Help");
 		ImGui::BulletText("ESC        Exit");
@@ -882,6 +1025,7 @@ static void dispatch_frame(struct canfd_frame *f, size_t mtu,
 	canid_t rpm_id, canid_t temp_id, canid_t fuel_id)
 {
 	int md = (mtu == CAN_MTU) ? CAN_MAX_DLEN : CANFD_MAX_DLEN;
+	can_monitor_observe(f, mtu);
 	if (f->can_id == door_id)   update_door_status(f, md);
 	if (f->can_id == signal_id) update_signal_status(f, md);
 	if (f->can_id == speed_id)  update_speed_status(f, md);
@@ -1092,6 +1236,7 @@ int main(int argc, char *argv[]) {
 				SDL_Keycode k = event.key.keysym.sym;
 				Uint16 mod = SDL_GetModState();
 				if (k == SDLK_d && !controls_mode) show_debug = !show_debug;
+				if (k == SDLK_m && !controls_mode) show_can_monitor = !show_can_monitor;
 				if (k == SDLK_SLASH || k == SDLK_F1 || (k == SDLK_h && (mod & KMOD_CTRL)))
 					show_help = !show_help;
 				if (k == SDLK_F11 || (k == SDLK_RETURN && (mod & KMOD_ALT))) {
