@@ -150,8 +150,6 @@ static void forward_can_to_gvret(const struct canfd_frame *frame)
 
 	send_to_client(packet, 11 + (int)len);
 	InterlockedIncrement(&gvret_frames_out);
-	log_event("TX id=0x%lx len=%u data0=0x%02x", (unsigned long)id, len,
-	          len ? frame->data[0] : 0);
 }
 
 static DWORD WINAPI can_rx_thread(LPVOID unused)
@@ -162,9 +160,10 @@ static DWORD WINAPI can_rx_thread(LPVOID unused)
 		struct canfd_frame frame;
 		size_t mtu = 0;
 
-		if (can_bus_recv(can_bus, &frame, &mtu) == 0 && mtu >= CAN_MTU)
-			forward_can_to_gvret(&frame);
-		else {
+		if (can_bus_recv(can_bus, &frame, &mtu) == 0) {
+			if (mtu >= CAN_MTU)
+				forward_can_to_gvret(&frame);
+		} else {
 			InterlockedIncrement(&vcan_recv_errors);
 			Sleep(10);
 		}

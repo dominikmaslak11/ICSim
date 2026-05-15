@@ -860,6 +860,15 @@ int main(int argc, char *argv[]) {
 			argv[i] = argv[i+1] = (char*)"";
 		}
 	}
+	{
+		int out = 1;
+		for (int in = 1; in < argc; in++) {
+			if (argv[in][0] != '\0')
+				argv[out++] = argv[in];
+		}
+		argc = out;
+		argv[argc] = NULL;
+	}
 
 	while ((opt = getopt(argc, argv, "rs:dm:h?R:P:")) != -1) {
 		switch (opt) {
