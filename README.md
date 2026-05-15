@@ -6,8 +6,32 @@ By: OpenGarages <agent.craig@gmail.com>
 Quick Start (Windows)
 ---------------------
 
-Open **three** terminals (cmd.exe, PowerShell, or MSYS2) in the `builddir\`
-directory, then run:
+For the modern Dear ImGui UI, run the full local test stack from PowerShell:
+
+```
+  .\run_windows_savvycan.ps1
+```
+
+This starts:
+
+```
+  builddir\icsim_imgui.exe vcan0
+  builddir\icsim_imgui.exe --controls vcan0
+  builddir\savvycan_bridge.exe --stats vcan0
+  SavvyCAN.exe
+```
+
+The controls window sends dashboard frames and background CAN traffic by
+default. Use the **BG CAN** checkbox in the controls window to pause or resume
+background traffic while the simulator is running. To start without background
+traffic:
+
+```
+  .\run_windows_savvycan.ps1 -NoNoise
+```
+
+You can still run the legacy SDL windows manually. Open **three** terminals
+(cmd.exe, PowerShell, or MSYS2) in the `builddir\` directory, then run:
 
 ```
 Terminal 1:  icsim.exe vcan0
@@ -84,14 +108,15 @@ SavvyCAN via the GVRET binary protocol over TCP.
 
 ### Setup
 
-1. Start `icsim.exe vcan0` and `controls.exe -X vcan0` first.
-2. Start `savvycan_bridge.exe vcan0` (add `--stats` for per-second counters).
+1. Start the full ImGui stack with `.\run_windows_savvycan.ps1`.
 3. In SavvyCAN, add a **Network Connection (GVRET)**:
    - Host: `127.0.0.1`
    - Port: `23`
    - Bus: `0`
    - Bit rate: `500000`
-4. Frames appear immediately in SavvyCAN's frame view.
+4. Frames appear immediately in SavvyCAN's frame view. You should see both
+   simulator control frames and background CAN traffic unless `-NoNoise` was
+   used or **BG CAN** is unchecked.
 
 The bridge exposes **one CAN bus at 500 kbit/s** on the standard GVRET
 TCP port (23). Frames sent from SavvyCAN are injected back into the virtual
