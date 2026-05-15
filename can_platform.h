@@ -44,6 +44,10 @@ struct canfd_frame {
 
 typedef struct can_bus can_bus_t;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int can_bus_open(can_bus_t **bus, const char *name);
 int can_bus_send(can_bus_t *bus, const struct canfd_frame *frame, size_t mtu);
 int can_bus_recv(can_bus_t *bus, struct canfd_frame *frame, size_t *mtu);
@@ -52,5 +56,9 @@ int can_bus_error_is_would_block(void);
 void can_bus_close(can_bus_t *bus);
 const char *can_bus_error(void);
 int can_bus_is_virtual(const can_bus_t *bus);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

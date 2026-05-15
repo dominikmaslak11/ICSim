@@ -1,5 +1,11 @@
 #include "can_platform.h"
 
+#include <stdio.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * lib.h - library include for command line tools
  *
@@ -210,3 +216,7 @@ void snprintf_can_error_frame(char *buf, size_t len, struct canfd_frame *cf,
 /*
  * Creates a CAN error frame output in user readable format.
  */
+
+#ifdef __cplusplus
+}
+#endif

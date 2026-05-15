@@ -1,6 +1,6 @@
 project(
     'icsim',
-    'c',
+    'c', 'cpp',
     license: 'GPL-3',
     default_options: [
         'warning_level=2',
@@ -60,3 +60,29 @@ test_asc = executable('test_asc',
     ['tests/test_asc.c', test_sources],
     dependencies: test_deps)
 test('ASC format', test_asc)
+
+# ---- Dear ImGui targets (C++) ----
+imgui_sources = [
+    'imgui/imgui.cpp',
+    'imgui/imgui_draw.cpp',
+    'imgui/imgui_widgets.cpp',
+    'imgui/imgui_tables.cpp',
+    'imgui/backends/imgui_impl_sdl2.cpp',
+    'imgui/backends/imgui_impl_sdlrenderer2.cpp',
+]
+imgui_common = ['can_bus.c', 'can_log.c', 'config.c', 'getopt_compat.c', 'lib.c', 'toml.c']
+imgui_deps = deps + socket_deps
+
+imgui_inc = include_directories('imgui', 'imgui/backends')
+
+executable('icsim_imgui',
+    ['icsim_imgui.cpp', imgui_common, imgui_sources],
+    include_directories: imgui_inc,
+    dependencies: imgui_deps,
+    override_options: ['warning_level=1'])
+
+executable('controls_imgui',
+    ['controls_imgui.cpp', 'can_bus.c', 'config.c', 'toml.c', imgui_sources],
+    include_directories: imgui_inc,
+    dependencies: imgui_deps,
+    override_options: ['warning_level=1'])

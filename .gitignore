@@ -1,0 +1,11 @@
+# Local cross-compilation sysroot
+.mingw-sysroot/
+
+# Build output
+builddir-win/
+
+# IDE
+.deepseek/
+
+# Temp files
+resume.txt
