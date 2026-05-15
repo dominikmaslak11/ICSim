@@ -104,61 +104,96 @@ static void send_fuel() {
 
 /* ---------- ImGui UI ---------- */
 static void render_controls() {
+	ImGuiIO &io = ImGui::GetIO();
+	float W = io.DisplaySize.x;
+
 	ImGui::SetNextWindowPos(ImVec2(0, 0));
-	ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+	ImGui::SetNextWindowSize(ImVec2(W, io.DisplaySize.y));
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 3));
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
 	ImGui::Begin("ICSim Controls", NULL,
 		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
 		ImGuiWindowFlags_NoMove);
 
-	ImGui::TextColored(ImVec4(0, 0.8f, 1, 1), "CANBus Control Panel (ImGui)");
+	/* ---- Title bar ---- */
+	ImGui::TextColored(ImVec4(0.0f, 0.75f, 1.0f, 1.0f),
+		"CANBus Control Panel");
+	ImGui::SameLine(W - 80);
+	ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.5f, 1.0f),
+		"FPS: %.0f", io.Framerate);
+
+	/* ---- Throttle ---- */
+	ImGui::PushItemWidth(W - 16);
+	ImGui::SliderFloat("##throttle", &throttle_val,
+		-1.0f, 1.0f, throttle_val > 0.01f ? "Accel %.0f%%" :
+		throttle_val < -0.01f ? "Brake %.0f%%" : "IDLE");
+	ImGui::PopItemWidth();
+	ImGui::Text("   %.1f mph  (max %.0f)", current_speed, MAX_SPEED);
 	ImGui::Separator();
 
-	/* Throttle / speed */
-	ImGui::Text("Throttle / Speed");
-	if (ImGui::SliderFloat("##throttle", &throttle_val, -1.0f, 1.0f, "%.0f%%")) {
-		/* no immediate send — speed is sent by timer below */
-	}
-	ImGui::Text("Speed: %.1f mph", current_speed);
+	/* ---- Engine row: RPM | Temp | Fuel side by side ---- */
+	float col_w = (W - 28) / 3.0f;
+	ImGui::PushItemWidth(col_w);
 
-	/* Turn signals */
-	ImGui::Spacing();
-	ImGui::Text("Turn Signals");
-	if (ImGui::Checkbox("Left", (bool*)&turn_left))  send_signals();
+	ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.2f, 1.0f), "RPM");
+	ImGui::SameLine(col_w + 14);
+	ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "TEMP");
+	ImGui::SameLine(col_w * 2 + 22);
+	ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.3f, 1.0f), "FUEL");
+
+	bool rpm_changed = ImGui::SliderInt("##rpm", &engine_rpm, 0, 7000, "%d");
 	ImGui::SameLine();
-	if (ImGui::Checkbox("Right", (bool*)&turn_right)) send_signals();
+	bool tmp_changed = ImGui::SliderInt("##temp", &coolant_temp, 60, 120, "%d");
+	ImGui::SameLine();
+	bool fuel_changed = ImGui::SliderInt("##fuel", &fuel_level, 0, 100, "%d%%");
 
-	/* Doors */
-	ImGui::Spacing();
-	ImGui::Text("Doors");
+	ImGui::PopItemWidth();
+	if (rpm_changed) send_rpm();
+	if (tmp_changed) send_temp();
+	if (fuel_changed) send_fuel();
+
+	ImGui::Separator();
+
+	/* ---- Signals + Doors in one row ---- */
+	ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "SIGNALS");
+	ImGui::SameLine();
+	bool sig_left = ImGui::Checkbox("◄ Left", (bool*)&turn_left);
+	ImGui::SameLine();
+	bool sig_right = ImGui::Checkbox("Right ►", (bool*)&turn_right);
+	if (sig_left || sig_right) send_signals();
+
+	ImGui::SameLine(W - 250);
+	ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "DOORS");
 	for (int d = 0; d < 4; d++) {
 		bool locked = (door_state >> d) & 1;
-		char label[32];
-		snprintf(label, sizeof(label), "Door %d %s", d + 1, locked ? "(locked)" : "(open)");
-		if (ImGui::Checkbox(label, &locked)) {
+		char label[8];
+		snprintf(label, sizeof(label), "%d", d + 1);
+		ImGui::SameLine();
+		bool toggled = ImGui::Checkbox(label, &locked);
+		if (toggled) {
 			if (locked) door_state |=  (1 << d);
 			else        door_state &= ~(1 << d);
 			send_doors();
 		}
 	}
 
-	/* RPM */
-	ImGui::Spacing();
-	ImGui::Text("Engine RPM");
-	if (ImGui::SliderInt("##rpm", &engine_rpm, 0, 7000, "%d")) send_rpm();
-
-	/* Coolant */
-	ImGui::Text("Coolant Temp");
-	if (ImGui::SliderInt("##temp", &coolant_temp, 60, 120, "%d C")) send_temp();
-
-	/* Fuel */
-	ImGui::Text("Fuel Level");
-	if (ImGui::SliderInt("##fuel", &fuel_level, 0, 100, "%d %%")) send_fuel();
-
-	ImGui::Spacing();
 	ImGui::Separator();
-	ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+
+	/* ---- Send All ---- */
+	if (ImGui::Button("Send All Values", ImVec2(W - 16, 24))) {
+		send_speed();
+		send_rpm();
+		send_temp();
+		send_fuel();
+		send_doors();
+		send_signals();
+	}
 
 	ImGui::End();
+	ImGui::PopStyleVar();
+	ImGui::PopStyleVar();
+	ImGui::PopStyleVar();
 }
 
 /* ---------- main ---------- */
@@ -203,7 +238,7 @@ int main(int argc, char *argv[]) {
 	SDL_Init(SDL_INIT_VIDEO);
 	SDL_Window *window = SDL_CreateWindow("ICSim Controls ImGui",
 		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-		350, 450, SDL_WINDOW_SHOWN);
+		480, 370, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 	SDL_Renderer *renderer = SDL_CreateRenderer(window, -1,
 		SDL_RENDERER_ACCELERATED);
 
@@ -225,18 +260,15 @@ int main(int argc, char *argv[]) {
 
 		/* Update speed based on throttle */
 		Uint32 now = SDL_GetTicks();
-		if (now - last_speed_update > 33) {
-			float rate = MAX_SPEED / (ACCEL_RATE * 100.0f);
-			if (throttle_val > 0.01f)
-				current_speed += rate;
-			else if (throttle_val < -0.01f) {
-				current_speed -= rate;
+			if (now - last_speed_update > 33) {
+				float dt = (now - last_speed_update) / 1000.0f;
+				float rate = MAX_SPEED / ACCEL_RATE;
+				current_speed += throttle_val * rate * dt;
 				if (current_speed < 0) current_speed = 0;
+				if (current_speed > MAX_SPEED) current_speed = MAX_SPEED;
+				send_speed();
+				last_speed_update = now;
 			}
-			if (current_speed > MAX_SPEED) current_speed = MAX_SPEED;
-			send_speed();
-			last_speed_update = now;
-		}
 
 		/* Render */
 		ImGui_ImplSDLRenderer2_NewFrame();

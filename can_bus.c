@@ -30,23 +30,6 @@ static unsigned short vcan_port(const char *name)
 	return (unsigned short)(30000 + (hash % 20000));
 }
 
-static void vcan_group(const char *name, struct in_addr *group)
-{
-	unsigned int hash = 2166136261U;
-	const unsigned char *p = (const unsigned char *)name;
-	unsigned char octet3;
-	unsigned char octet4;
-
-	while (*p) {
-		hash ^= *p++;
-		hash *= 16777619U;
-	}
-
-	octet3 = (unsigned char)(hash & 0xffU);
-	octet4 = (unsigned char)((hash >> 8) & 0xffU);
-	group->s_addr = htonl(0xEFFF0000U | ((unsigned int)octet3 << 8) | octet4);
-}
-
 static void set_last_wsa_error(const char *context)
 {
 	int err = WSAGetLastError();
@@ -59,11 +42,7 @@ int can_bus_open(can_bus_t **bus, const char *name)
 	WSADATA wsa;
 	struct can_bus *opened;
 	struct sockaddr_in bind_addr;
-	struct ip_mreq mreq;
-	struct in_addr loopback_addr;
 	int reuse = 1;
-	int loopback = 1;
-	int ttl = 1;
 
 	if (!wsa_started) {
 		if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -86,7 +65,6 @@ int can_bus_open(can_bus_t **bus, const char *name)
 		return -1;
 	}
 
-	loopback_addr.s_addr = htonl(INADDR_LOOPBACK);
 	setsockopt(opened->sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse));
 	{
 		int buffer_size = 1024 * 1024;
@@ -108,23 +86,15 @@ int can_bus_open(can_bus_t **bus, const char *name)
 
 	memset(&opened->addr, 0, sizeof(opened->addr));
 	opened->addr.sin_family = AF_INET;
-	vcan_group(name, &opened->addr.sin_addr);
+	opened->addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 	opened->addr.sin_port = htons(vcan_port(name));
 
-	memset(&mreq, 0, sizeof(mreq));
-	mreq.imr_multiaddr = opened->addr.sin_addr;
-	mreq.imr_interface = loopback_addr;
-	if (setsockopt(opened->sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-	               (const char *)&mreq, sizeof(mreq)) == SOCKET_ERROR) {
-		set_last_wsa_error("IP_ADD_MEMBERSHIP");
-		closesocket(opened->sock);
-		free(opened);
-		return -1;
+	/* enable broadcast so multiple processes on the same port all receive */
+	{
+		int broadcast = 1;
+		setsockopt(opened->sock, SOL_SOCKET, SO_BROADCAST,
+		           (const char *)&broadcast, sizeof(broadcast));
 	}
-	setsockopt(opened->sock, IPPROTO_IP, IP_MULTICAST_IF,
-	           (const char *)&loopback_addr, sizeof(loopback_addr));
-	setsockopt(opened->sock, IPPROTO_IP, IP_MULTICAST_LOOP, (const char *)&loopback, sizeof(loopback));
-	setsockopt(opened->sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char *)&ttl, sizeof(ttl));
 
 	opened->virtual_bus = 1;
 	*bus = opened;

@@ -4,6 +4,10 @@
 # Build output
 builddir-win/
 
+# Runtime state
+icsim.ini
+icsim_model.txt
+
 # IDE
 .deepseek/
 
