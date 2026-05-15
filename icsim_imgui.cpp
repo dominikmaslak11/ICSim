@@ -82,6 +82,10 @@ static can_bus_t   *ctrl_can = NULL;
 static float        ctrl_speed_mph = 0.0f;
 static char        *traffic_log = (char *)DEFAULT_CAN_TRAFFIC;
 static int          play_traffic = 1;
+static int          traffic_available = 1;
+static volatile int traffic_enabled = 1;
+static volatile int traffic_delay_ms = 2;
+static SDL_atomic_t traffic_frames_sent = {0};
 static volatile int traffic_running = 1;
 
 /* CAN IDs (updated on model switch) */
@@ -261,15 +265,22 @@ static int play_can_traffic_thread(void *unused) {
 			struct canfd_frame traffic_frame;
 			int traffic_mtu;
 
+			if (!traffic_enabled) {
+				SDL_Delay(50);
+				continue;
+			}
+
 			if (!hash) continue;
 			frame_text = hash;
 			while (frame_text > line && frame_text[-1] != ' ' && frame_text[-1] != '\t')
 				frame_text--;
 
 			traffic_mtu = parse_canframe(frame_text, &traffic_frame);
-			if (traffic_mtu)
+			if (traffic_mtu) {
 				can_bus_send(ctrl_can, &traffic_frame, (size_t)traffic_mtu);
-			SDL_Delay(2);
+				SDL_AtomicAdd(&traffic_frames_sent, 1);
+			}
+			SDL_Delay(traffic_delay_ms);
 		}
 		fclose(traffic);
 	}
@@ -754,6 +765,24 @@ static void render_controls() {
 
 	ImGui::Separator();
 
+	/* background CAN traffic */
+	bool bg_on = traffic_enabled != 0;
+	ImGui::BeginDisabled(!traffic_available);
+	if (ImGui::Checkbox("BG CAN", &bg_on))
+		traffic_enabled = bg_on ? 1 : 0;
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(W * 0.30f);
+	int bg_delay = traffic_delay_ms;
+	if (ImGui::SliderInt("##bgdelay", &bg_delay, 1, 25, "%d ms"))
+		traffic_delay_ms = bg_delay;
+	ImGui::SameLine();
+	ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.5f, 1.0f),
+		"%d frames", SDL_AtomicGet(&traffic_frames_sent));
+	ImGui::EndDisabled();
+	if (!traffic_available)
+		ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f), "BG CAN unavailable");
+	ImGui::Separator();
+
 	/* send all */
 	if (ImGui::Button("Send All Values", ImVec2(W - 16, 24)))
 		controls_send_all();
@@ -932,8 +961,9 @@ int main(int argc, char *argv[]) {
 	}
 	if (controls_mode && play_traffic && stat(traffic_log, &dirstat) == -1) {
 		fprintf(stderr, "WARNING: CAN traffic file not found: %s\n", traffic_log);
-		play_traffic = 0;
+		traffic_available = 0;
 	}
+	traffic_enabled = play_traffic && traffic_available;
 
 	printf("Using CAN interface %s", argv[optind]);
 	if (controls_mode) printf("  [controls mode]");
@@ -1049,7 +1079,7 @@ int main(int argc, char *argv[]) {
 
 	/* initial send in controls mode so dashboard sees CAN immediately */
 	if (controls_mode) controls_send_all();
-	if (controls_mode && play_traffic)
+	if (controls_mode && traffic_available)
 		traffic_thread = SDL_CreateThread(play_can_traffic_thread,
 			"icsim-bg-can", NULL);
 
