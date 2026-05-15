@@ -46,6 +46,7 @@ extern "C" {
 #ifndef DATA_DIR
 #define DATA_DIR "./data/"
 #endif
+#define DEFAULT_CAN_TRAFFIC DATA_DIR "sample-can.log"
 
 /* ---------- shared state ---------- */
 static icsim_config_t g_cfg;
@@ -79,6 +80,9 @@ static int          ctrl_rpm_id,  ctrl_temp_id,   ctrl_fuel_id;
 static int          ctrl_door_pos, ctrl_signal_pos, ctrl_speed_pos;
 static can_bus_t   *ctrl_can = NULL;
 static float        ctrl_speed_mph = 0.0f;
+static char        *traffic_log = (char *)DEFAULT_CAN_TRAFFIC;
+static int          play_traffic = 1;
+static volatile int traffic_running = 1;
 
 /* CAN IDs (updated on model switch) */
 static canid_t g_door_id, g_signal_id, g_speed_id;
@@ -237,6 +241,40 @@ static void controls_send_all() {
 	controls_send_fuel();
 	controls_send_doors();
 	controls_send_signals();
+}
+
+static int play_can_traffic_thread(void *unused) {
+	(void)unused;
+
+	while (traffic_running) {
+		FILE *traffic = fopen(traffic_log, "r");
+		char line[256];
+
+		if (!traffic) {
+			fprintf(stderr, "WARNING: Could not open CAN traffic file: %s\n", traffic_log);
+			return 1;
+		}
+
+		while (traffic_running && fgets(line, sizeof(line), traffic)) {
+			char *hash = strchr(line, '#');
+			char *frame_text;
+			struct canfd_frame traffic_frame;
+			int traffic_mtu;
+
+			if (!hash) continue;
+			frame_text = hash;
+			while (frame_text > line && frame_text[-1] != ' ' && frame_text[-1] != '\t')
+				frame_text--;
+
+			traffic_mtu = parse_canframe(frame_text, &traffic_frame);
+			if (traffic_mtu)
+				can_bus_send(ctrl_can, &traffic_frame, (size_t)traffic_mtu);
+			SDL_Delay(2);
+		}
+		fclose(traffic);
+	}
+
+	return 0;
 }
 
 /* ---------- model scanning & switching ---------- */
@@ -834,6 +872,8 @@ static void Usage(const char *msg) {
 	printf("  -s SEED      seed value\n");
 	printf("  -d           debug mode\n");
 	printf("  -m MODEL     vehicle model (bmw, default.toml, etc.)\n");
+	printf("  -t FILE      background CAN traffic file (controls mode)\n");
+	printf("  -X           disable background CAN traffic (controls mode)\n");
 	printf("  -R FILE      record to ASC file\n");
 	printf("  -P FILE      replay from ASC file\n");
 	printf("  --controls   control panel mode (sends CAN, not receives)\n");
@@ -849,6 +889,7 @@ int main(int argc, char *argv[]) {
 	struct stat dirstat;
 	int running = 1;
 	size_t mtu;
+	SDL_Thread *traffic_thread = NULL;
 
 	/* handle long flags before getopt (getopt_compat has no long-opt support) */
 	for (int i = 1; i < argc; i++) {
@@ -870,12 +911,14 @@ int main(int argc, char *argv[]) {
 		argv[argc] = NULL;
 	}
 
-	while ((opt = getopt(argc, argv, "rs:dm:h?R:P:")) != -1) {
+	while ((opt = getopt(argc, argv, "Xrs:dm:t:h?R:P:")) != -1) {
 		switch (opt) {
+		case 'X': play_traffic = 0; break;
 		case 'r': randomize = 1; break;
 		case 's': seed = atoi(optarg); break;
 		case 'd': debug = 1; break;
 		case 'm': model = optarg; break;
+		case 't': traffic_log = optarg; break;
 		case 'R': record_path = optarg; break;
 		case 'P': replay_path = optarg; break;
 		default:  Usage(NULL);
@@ -886,6 +929,10 @@ int main(int argc, char *argv[]) {
 	if (!controls_mode && stat(DATA_DIR, &dirstat) == -1) {
 		printf("ERROR: DATA_DIR not found\n");
 		exit(34);
+	}
+	if (controls_mode && play_traffic && stat(traffic_log, &dirstat) == -1) {
+		fprintf(stderr, "WARNING: CAN traffic file not found: %s\n", traffic_log);
+		play_traffic = 0;
 	}
 
 	printf("Using CAN interface %s", argv[optind]);
@@ -1002,6 +1049,9 @@ int main(int argc, char *argv[]) {
 
 	/* initial send in controls mode so dashboard sees CAN immediately */
 	if (controls_mode) controls_send_all();
+	if (controls_mode && play_traffic)
+		traffic_thread = SDL_CreateThread(play_can_traffic_thread,
+			"icsim-bg-can", NULL);
 
 	while (running) {
 		SDL_Event event;
@@ -1091,6 +1141,10 @@ int main(int argc, char *argv[]) {
 	}
 
 	/* cleanup */
+	traffic_running = 0;
+	if (traffic_thread)
+		SDL_WaitThread(traffic_thread, NULL);
+
 	ImGui_ImplSDLRenderer2_Shutdown();
 	ImGui_ImplSDL2_Shutdown();
 	ImGui::DestroyContext();
