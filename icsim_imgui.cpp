@@ -118,6 +118,7 @@ static int can_monitor_entries = 0;
 static bool can_monitor_paused = false;
 static bool can_monitor_known_only = false;
 static char can_monitor_filter[32] = {0};
+static char can_monitor_export_status[128] = {0};
 
 /* model switching */
 static std::vector<std::string> model_list;
@@ -295,6 +296,43 @@ static int can_monitor_row_matches(const can_monitor_entry &e) {
 	can_monitor_value_text(e, value, sizeof(value));
 	return strstr(id_buf, filter) || strstr(payload, filter) ||
 		strstr(signal, filter) || strstr(value, filter);
+}
+
+static void can_monitor_export_csv(const std::vector<int> &rows) {
+	FILE *csv = fopen("can_monitor.csv", "w");
+	Uint32 now = SDL_GetTicks();
+
+	if (!csv) {
+		snprintf(can_monitor_export_status, sizeof(can_monitor_export_status),
+			"export failed");
+		return;
+	}
+
+	fprintf(csv, "id,signal,value,hz,count,age_s,len,payload\n");
+	for (int row : rows) {
+		const can_monitor_entry &e = can_monitor[row];
+		char payload[3 * CAN_MAX_DLEN + 1];
+		char value[32];
+		const char *signal = can_monitor_signal_name(e.id);
+		float age = (now - e.last_tick) / 1000.0f;
+		float window_s = (e.last_tick - e.first_tick) / 1000.0f;
+		float hz = (window_s > 0.1f) ? (float)e.count / window_s : 0.0f;
+
+		can_monitor_payload_text(e, payload, sizeof(payload));
+		can_monitor_value_text(e, value, sizeof(value));
+		fprintf(csv, "0x%03X,%s,%s,%.2f,%lu,%.2f,%u,%s\n",
+			e.id & CAN_EFF_MASK,
+			signal[0] ? signal : "-",
+			value[0] ? value : "-",
+			hz,
+			e.count,
+			age,
+			(unsigned)e.len,
+			payload);
+	}
+	fclose(csv);
+	snprintf(can_monitor_export_status, sizeof(can_monitor_export_status),
+		"exported %d rows", (int)rows.size());
 }
 
 static void can_monitor_observe(const struct canfd_frame *f, size_t mtu) {
@@ -740,9 +778,15 @@ static void render_can_monitor_panel(float W, float H) {
 	ImGui::Checkbox("Pause", &can_monitor_paused);
 	ImGui::SameLine();
 	ImGui::Checkbox("Known", &can_monitor_known_only);
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Export"))
+		can_monitor_export_csv(rows);
 	ImGui::SetNextItemWidth(-1.0f);
 	ImGui::InputTextWithHint("##canfilter", "filter ID, signal, payload", can_monitor_filter,
 		sizeof(can_monitor_filter));
+	if (can_monitor_export_status[0])
+		ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.5f, 1.0f),
+			"%s to can_monitor.csv", can_monitor_export_status);
 	ImGui::Separator();
 
 	if (ImGui::BeginTable("canmon", 7,

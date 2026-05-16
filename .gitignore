@@ -7,6 +7,7 @@ builddir-win/
 # Runtime state
 icsim.ini
 icsim_model.txt
+can_monitor.csv
 
 # IDE
 .deepseek/
