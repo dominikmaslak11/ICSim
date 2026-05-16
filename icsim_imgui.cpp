@@ -65,6 +65,9 @@ static int          turn_status[2] = {0, 0};
 static char        *model = NULL;
 static char        *record_path = NULL;
 static char        *replay_path = NULL;
+static char         quick_record_path[128] = "dashboard_record.asc";
+static int          quick_record_frames = 0;
+static char         quick_record_status[128] = {0};
 static int          headless = 0, headless_duration = 0;
 static can_log_t   *can_recorder = NULL;
 static can_log_t   *can_replayer = NULL;
@@ -333,6 +336,33 @@ static void can_monitor_export_csv(const std::vector<int> &rows) {
 	fclose(csv);
 	snprintf(can_monitor_export_status, sizeof(can_monitor_export_status),
 		"exported %d rows", (int)rows.size());
+}
+
+static void quick_record_start(void) {
+	if (can_recorder)
+		return;
+
+	can_recorder = can_log_open_record(quick_record_path);
+	if (can_recorder) {
+		record_path = quick_record_path;
+		quick_record_frames = 0;
+		snprintf(quick_record_status, sizeof(quick_record_status),
+			"recording");
+	} else {
+		snprintf(quick_record_status, sizeof(quick_record_status),
+			"record failed");
+	}
+}
+
+static void quick_record_stop(void) {
+	if (!can_recorder)
+		return;
+
+	can_log_close(can_recorder);
+	can_recorder = NULL;
+	snprintf(quick_record_status, sizeof(quick_record_status),
+		"saved %d frames", quick_record_frames);
+	record_path = NULL;
 }
 
 static void can_monitor_observe(const struct canfd_frame *f, size_t mtu) {
@@ -898,6 +928,20 @@ static void render_dashboard() {
 		ImGui::SameLine();
 		ImGui::TextColored(ImVec4(1, 0.2f, 0.2f, 1), "\xe2\x97\x8f REC");
 	}
+	ImGui::SameLine(W * 0.68f);
+	if (can_recorder) {
+		if (ImGui::SmallButton("Stop REC"))
+			quick_record_stop();
+		ImGui::SameLine();
+		ImGui::Text("%d", quick_record_frames);
+	} else {
+		if (ImGui::SmallButton("REC"))
+			quick_record_start();
+	}
+	if (quick_record_status[0]) {
+		ImGui::SameLine();
+		ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.65f, 1.0f), "%s", quick_record_status);
+	}
 	ImGui::SameLine(W * 0.88f);
 	ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.5f, 1.0f),
 		"?:help  FPS:%.0f", io.Framerate);
@@ -1190,7 +1234,10 @@ static void dispatch_frame(struct canfd_frame *f, size_t mtu,
 	if (f->can_id == rpm_id)    update_rpm_status(f, md);
 	if (f->can_id == temp_id)   update_temp_status(f, md);
 	if (f->can_id == fuel_id)   update_fuel_status(f, md);
-	if (can_recorder) can_log_record(can_recorder, f);
+	if (can_recorder) {
+		can_log_record(can_recorder, f);
+		quick_record_frames++;
+	}
 	frames_total++;
 	last_can_activity = SDL_GetTicks();
 }

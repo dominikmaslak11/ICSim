@@ -8,6 +8,7 @@ builddir-win/
 icsim.ini
 icsim_model.txt
 can_monitor.csv
+dashboard_record.asc
 
 # IDE
 .deepseek/
