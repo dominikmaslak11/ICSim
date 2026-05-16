@@ -68,6 +68,8 @@ static char        *replay_path = NULL;
 static char         quick_record_path[128] = "dashboard_record.asc";
 static int          quick_record_frames = 0;
 static char         quick_record_status[128] = {0};
+static int          quick_replay_frames = 0;
+static char         quick_replay_status[128] = {0};
 static int          headless = 0, headless_duration = 0;
 static can_log_t   *can_recorder = NULL;
 static can_log_t   *can_replayer = NULL;
@@ -363,6 +365,32 @@ static void quick_record_stop(void) {
 	snprintf(quick_record_status, sizeof(quick_record_status),
 		"saved %d frames", quick_record_frames);
 	record_path = NULL;
+}
+
+static void quick_replay_start(void) {
+	if (can_replayer)
+		return;
+
+	can_replayer = can_log_open_replay(quick_record_path);
+	if (can_replayer) {
+		replay_path = quick_record_path;
+		replay_base_tick = SDL_GetTicks();
+		quick_replay_frames = 0;
+		snprintf(quick_replay_status, sizeof(quick_replay_status), "replaying");
+	} else {
+		snprintf(quick_replay_status, sizeof(quick_replay_status), "replay failed");
+	}
+}
+
+static void quick_replay_stop(void) {
+	if (!can_replayer)
+		return;
+
+	can_log_close(can_replayer);
+	can_replayer = NULL;
+	replay_path = NULL;
+	snprintf(quick_replay_status, sizeof(quick_replay_status),
+		"replayed %d frames", quick_replay_frames);
 }
 
 static void can_monitor_observe(const struct canfd_frame *f, size_t mtu) {
@@ -942,6 +970,16 @@ static void render_dashboard() {
 		ImGui::SameLine();
 		ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.65f, 1.0f), "%s", quick_record_status);
 	}
+	ImGui::SameLine(W * 0.79f);
+	if (can_replayer) {
+		if (ImGui::SmallButton("Stop PLAY"))
+			quick_replay_stop();
+		ImGui::SameLine();
+		ImGui::Text("%d", quick_replay_frames);
+	} else {
+		if (ImGui::SmallButton("PLAY"))
+			quick_replay_start();
+	}
 	ImGui::SameLine(W * 0.88f);
 	ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.5f, 1.0f),
 		"?:help  FPS:%.0f", io.Framerate);
@@ -1486,6 +1524,7 @@ int main(int argc, char *argv[]) {
 					if (elapsed * replay_speed < toff) break;
 					can_bus_send(can, &rf, rmtu);
 					if (can_recorder) can_log_record(can_recorder, &rf);
+					quick_replay_frames++;
 				}
 			}
 		}
