@@ -115,6 +115,9 @@ struct can_monitor_entry {
 
 static can_monitor_entry can_monitor[CAN_MONITOR_MAX];
 static int can_monitor_entries = 0;
+static bool can_monitor_paused = false;
+static bool can_monitor_known_only = false;
+static char can_monitor_filter[32] = {0};
 
 /* model switching */
 static std::vector<std::string> model_list;
@@ -203,11 +206,50 @@ static int can_monitor_oldest(void) {
 	return oldest;
 }
 
+static const char *can_monitor_signal_name(canid_t id) {
+	if (id == g_speed_id)  return "speed";
+	if (id == g_rpm_id)    return "rpm";
+	if (id == g_temp_id)   return "temp";
+	if (id == g_fuel_id)   return "fuel";
+	if (id == g_door_id)   return "doors";
+	if (id == g_signal_id) return "turn";
+	return "";
+}
+
+static void can_monitor_payload_text(const can_monitor_entry &e,
+	char *payload, size_t payload_size)
+{
+	int off = 0;
+	for (int i = 0; i < e.len && off < (int)payload_size - 3; i++) {
+		off += snprintf(payload + off, payload_size - off,
+			"%02X%s", e.data[i], (i + 1 == e.len) ? "" : " ");
+	}
+	payload[off] = '\0';
+}
+
+static int can_monitor_row_matches(const can_monitor_entry &e) {
+	char id_buf[16];
+	char payload[3 * CAN_MAX_DLEN + 1];
+	const char *signal = can_monitor_signal_name(e.id);
+	const char *filter = can_monitor_filter;
+
+	if (can_monitor_known_only && signal[0] == '\0')
+		return 0;
+	if (filter[0] == '\0')
+		return 1;
+
+	snprintf(id_buf, sizeof(id_buf), "%03X", e.id & CAN_EFF_MASK);
+	can_monitor_payload_text(e, payload, sizeof(payload));
+	return strstr(id_buf, filter) || strstr(payload, filter) || strstr(signal, filter);
+}
+
 static void can_monitor_observe(const struct canfd_frame *f, size_t mtu) {
 	Uint32 now = SDL_GetTicks();
 	int idx = can_monitor_find(f->can_id);
 	uint8_t len = f->len;
 
+	if (can_monitor_paused)
+		return;
 	if (mtu < CAN_MTU)
 		return;
 	if (len > CAN_MAX_DLEN)
@@ -611,14 +653,14 @@ static void render_can_monitor_panel(float W, float H) {
 		return;
 
 	Uint32 now = SDL_GetTicks();
-	float panel_w = W * 0.38f;
-	float panel_h = H * 0.30f;
+	float panel_w = W * 0.48f;
+	float panel_h = H * 0.36f;
 	float panel_x = W - panel_w - 8.0f;
 	float panel_y = H - panel_h - 8.0f;
 	std::vector<int> rows;
 
 	for (int i = 0; i < can_monitor_entries; i++) {
-		if (can_monitor[i].active)
+		if (can_monitor[i].active && can_monitor_row_matches(can_monitor[i]))
 			rows.push_back(i);
 	}
 	std::sort(rows.begin(), rows.end(), [](int a, int b) {
@@ -633,49 +675,59 @@ static void render_can_monitor_panel(float W, float H) {
 		ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
 		ImGuiWindowFlags_NoSavedSettings);
 
-	ImGui::Text("IDs: %d  Frames: %d", (int)rows.size(), frames_total);
+	ImGui::Text("IDs: %d/%d  Frames: %d", (int)rows.size(), can_monitor_entries, frames_total);
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Clear")) {
 		memset(can_monitor, 0, sizeof(can_monitor));
 		can_monitor_entries = 0;
 		rows.clear();
 	}
+	ImGui::SameLine();
+	ImGui::Checkbox("Pause", &can_monitor_paused);
+	ImGui::SameLine();
+	ImGui::Checkbox("Known", &can_monitor_known_only);
+	ImGui::SetNextItemWidth(-1.0f);
+	ImGui::InputTextWithHint("##canfilter", "filter ID, signal, payload", can_monitor_filter,
+		sizeof(can_monitor_filter));
 	ImGui::Separator();
 
-	if (ImGui::BeginTable("canmon", 5,
+	if (ImGui::BeginTable("canmon", 6,
 		ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
 		ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
 		ImVec2(0, 0))) {
 		ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 46.0f);
-		ImGui::TableSetupColumn("Hz", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+		ImGui::TableSetupColumn("Signal", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+		ImGui::TableSetupColumn("Hz", ImGuiTableColumnFlags_WidthFixed, 40.0f);
 		ImGui::TableSetupColumn("Cnt", ImGuiTableColumnFlags_WidthFixed, 46.0f);
-		ImGui::TableSetupColumn("Age", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+		ImGui::TableSetupColumn("Age", ImGuiTableColumnFlags_WidthFixed, 38.0f);
 		ImGui::TableSetupColumn("Data");
 		ImGui::TableHeadersRow();
 
 		for (int row : rows) {
 			const can_monitor_entry &e = can_monitor[row];
 			char payload[3 * CAN_MAX_DLEN + 1];
-			int off = 0;
+			const char *signal = can_monitor_signal_name(e.id);
 			float age = (now - e.last_tick) / 1000.0f;
 			float window_s = (e.last_tick - e.first_tick) / 1000.0f;
 			float hz = (window_s > 0.1f) ? (float)e.count / window_s : 0.0f;
 
-			for (int i = 0; i < e.len && off < (int)sizeof(payload) - 3; i++)
-				off += snprintf(payload + off, sizeof(payload) - off,
-					"%02X%s", e.data[i], (i + 1 == e.len) ? "" : " ");
-			payload[off] = '\0';
+			can_monitor_payload_text(e, payload, sizeof(payload));
 
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
 			ImGui::Text("0x%03X", e.id & CAN_EFF_MASK);
 			ImGui::TableSetColumnIndex(1);
-			ImGui::Text("%.1f", hz);
+			if (signal[0])
+				ImGui::TextColored(ImVec4(0.2f, 0.85f, 1.0f, 1.0f), "%s", signal);
+			else
+				ImGui::TextUnformatted("-");
 			ImGui::TableSetColumnIndex(2);
-			ImGui::Text("%lu", e.count);
+			ImGui::Text("%.1f", hz);
 			ImGui::TableSetColumnIndex(3);
-			ImGui::Text("%.1f", age);
+			ImGui::Text("%lu", e.count);
 			ImGui::TableSetColumnIndex(4);
+			ImGui::Text("%.1f", age);
+			ImGui::TableSetColumnIndex(5);
 			ImGui::TextUnformatted(payload);
 		}
 		ImGui::EndTable();
