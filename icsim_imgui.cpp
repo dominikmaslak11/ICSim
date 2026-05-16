@@ -227,9 +227,61 @@ static void can_monitor_payload_text(const can_monitor_entry &e,
 	payload[off] = '\0';
 }
 
+static void can_monitor_value_text(const can_monitor_entry &e,
+	char *value, size_t value_size)
+{
+	value[0] = '\0';
+	if (e.id == g_speed_id) {
+		int pos = g_cfg.can.speed_pos;
+		if (e.len <= pos + 1) return;
+		if (model && !strncmp(model, "bmw", 3)) {
+			long mph = (((e.data[pos + 1] - 208) * 256) + e.data[pos]) / 16;
+			snprintf(value, value_size, "%ld mph", mph);
+		} else {
+			int raw = (e.data[pos] << 8) | e.data[pos + 1];
+			double mph = (double)raw * g_cfg.speed.scaling / g_cfg.speed.divisor;
+			snprintf(value, value_size, "%.1f mph", mph);
+		}
+	} else if (e.id == g_rpm_id) {
+		int pos = g_cfg.rpm.rpm_pos;
+		if (e.len <= pos + 1) return;
+		int raw = (e.data[pos] << 8) | e.data[pos + 1];
+		double rpm = (double)raw * g_cfg.rpm.scaling / g_cfg.rpm.divisor;
+		snprintf(value, value_size, "%.0f rpm", rpm);
+	} else if (e.id == g_temp_id) {
+		int pos = g_cfg.temp.temp_pos;
+		if (e.len <= pos) return;
+		double temp = (double)e.data[pos] * g_cfg.temp.scaling / g_cfg.temp.divisor;
+		snprintf(value, value_size, "%.0f C", temp);
+	} else if (e.id == g_fuel_id) {
+		int pos = g_cfg.fuel.fuel_pos;
+		if (e.len <= pos) return;
+		double fuel = (double)e.data[pos] * g_cfg.fuel.scaling / g_cfg.fuel.divisor;
+		snprintf(value, value_size, "%.0f%%", fuel);
+	} else if (e.id == g_door_id) {
+		int pos = g_cfg.can.door_pos;
+		if (e.len <= pos) return;
+		unsigned char d = e.data[pos];
+		snprintf(value, value_size, "%c%c%c%c",
+			(d & ICSIM_DOOR1) ? 'L' : 'O',
+			(d & ICSIM_DOOR2) ? 'L' : 'O',
+			(d & ICSIM_DOOR3) ? 'L' : 'O',
+			(d & ICSIM_DOOR4) ? 'L' : 'O');
+	} else if (e.id == g_signal_id) {
+		int pos = g_cfg.can.signal_pos;
+		if (e.len <= pos) return;
+		unsigned char s = e.data[pos];
+		snprintf(value, value_size, "%s%s%s",
+			(s & ICSIM_TURN_LEFT) ? "L" : "",
+			(s & ICSIM_TURN_RIGHT) ? "R" : "",
+			(s & (ICSIM_TURN_LEFT | ICSIM_TURN_RIGHT)) ? "" : "off");
+	}
+}
+
 static int can_monitor_row_matches(const can_monitor_entry &e) {
 	char id_buf[16];
 	char payload[3 * CAN_MAX_DLEN + 1];
+	char value[32];
 	const char *signal = can_monitor_signal_name(e.id);
 	const char *filter = can_monitor_filter;
 
@@ -240,7 +292,9 @@ static int can_monitor_row_matches(const can_monitor_entry &e) {
 
 	snprintf(id_buf, sizeof(id_buf), "%03X", e.id & CAN_EFF_MASK);
 	can_monitor_payload_text(e, payload, sizeof(payload));
-	return strstr(id_buf, filter) || strstr(payload, filter) || strstr(signal, filter);
+	can_monitor_value_text(e, value, sizeof(value));
+	return strstr(id_buf, filter) || strstr(payload, filter) ||
+		strstr(signal, filter) || strstr(value, filter);
 }
 
 static void can_monitor_observe(const struct canfd_frame *f, size_t mtu) {
@@ -691,12 +745,13 @@ static void render_can_monitor_panel(float W, float H) {
 		sizeof(can_monitor_filter));
 	ImGui::Separator();
 
-	if (ImGui::BeginTable("canmon", 6,
+	if (ImGui::BeginTable("canmon", 7,
 		ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
 		ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
 		ImVec2(0, 0))) {
 		ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 46.0f);
 		ImGui::TableSetupColumn("Signal", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+		ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 70.0f);
 		ImGui::TableSetupColumn("Hz", ImGuiTableColumnFlags_WidthFixed, 40.0f);
 		ImGui::TableSetupColumn("Cnt", ImGuiTableColumnFlags_WidthFixed, 46.0f);
 		ImGui::TableSetupColumn("Age", ImGuiTableColumnFlags_WidthFixed, 38.0f);
@@ -706,12 +761,14 @@ static void render_can_monitor_panel(float W, float H) {
 		for (int row : rows) {
 			const can_monitor_entry &e = can_monitor[row];
 			char payload[3 * CAN_MAX_DLEN + 1];
+			char value[32];
 			const char *signal = can_monitor_signal_name(e.id);
 			float age = (now - e.last_tick) / 1000.0f;
 			float window_s = (e.last_tick - e.first_tick) / 1000.0f;
 			float hz = (window_s > 0.1f) ? (float)e.count / window_s : 0.0f;
 
 			can_monitor_payload_text(e, payload, sizeof(payload));
+			can_monitor_value_text(e, value, sizeof(value));
 
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
@@ -722,12 +779,17 @@ static void render_can_monitor_panel(float W, float H) {
 			else
 				ImGui::TextUnformatted("-");
 			ImGui::TableSetColumnIndex(2);
-			ImGui::Text("%.1f", hz);
+			if (value[0])
+				ImGui::TextUnformatted(value);
+			else
+				ImGui::TextUnformatted("-");
 			ImGui::TableSetColumnIndex(3);
-			ImGui::Text("%lu", e.count);
+			ImGui::Text("%.1f", hz);
 			ImGui::TableSetColumnIndex(4);
-			ImGui::Text("%.1f", age);
+			ImGui::Text("%lu", e.count);
 			ImGui::TableSetColumnIndex(5);
+			ImGui::Text("%.1f", age);
+			ImGui::TableSetColumnIndex(6);
 			ImGui::TextUnformatted(payload);
 		}
 		ImGui::EndTable();
